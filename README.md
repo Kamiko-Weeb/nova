@@ -8,6 +8,26 @@ windows, looking at your screen, and controlling the mouse and keyboard.
 Runs on **NVIDIA NIM**, so it works with the free API keys from
 [build.nvidia.com](https://build.nvidia.com).
 
+> ### ⚠️ Read this before installing
+>
+> Nova executes real commands on your computer. It can run shell commands, read
+> and write any file your account can reach, control the mouse and keyboard, and
+> see your screen. That is the point of it — but it means **installing Nova is
+> handing a language model the keys to your machine**.
+>
+> - It **asks before anything that changes something**, showing you the exact
+>   command first. Leave that on. It is the only thing between a misunderstood
+>   instruction and a deleted folder.
+> - Language models get things wrong. Nova will sometimes do the wrong thing
+>   confidently. Supervise it like a new intern, not like a calculator.
+> - Everything runs locally under your own user account. Nothing is sent
+>   anywhere except your instructions and tool results, which go to NVIDIA's
+>   API as part of normal operation.
+> - No warranty. See the [licence](LICENSE).
+>
+> If you would not run a command a stranger handed you, do not click Allow on
+> one you do not understand.
+
 | Command | What it does |
 |---|---|
 | `python main.py gui` | desktop chat window |
