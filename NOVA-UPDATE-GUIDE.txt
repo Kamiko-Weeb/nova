@@ -1,0 +1,117 @@
+============================================================
+NOVA - HOW TO PUSH AN UPDATE
+============================================================
+
+Shorter than the MintKey routine, because GitHub builds BOTH
+installers for you. You never have to run PyInstaller or
+build a .dmg by hand, and you do not need your Mac for it.
+
+------------------------------------------------------------
+STEP 1 - Make your change
+------------------------------------------------------------
+Edit whatever you want inside:
+
+  C:\Users\User\OneDrive\Documents\Claude\nova\
+
+Test it before pushing:
+
+  nova doctor        (is the setup healthy?)
+  nova               (open the app and try it)
+
+------------------------------------------------------------
+STEP 2 - Bump the version
+------------------------------------------------------------
+Open version.txt and increase the number by one.
+
+  1  ->  2  ->  3  ...
+
+This is what names the release. If you forget, the build
+still runs but it overwrites the release you already have
+instead of making a new one.
+
+------------------------------------------------------------
+STEP 3 - Push
+------------------------------------------------------------
+In PowerShell:
+
+  cd C:\Users\User\OneDrive\Documents\Claude\nova
+  git add .
+  git commit -m "describe what you changed"
+  git push
+
+Write something useful in the message:
+  "Add Spotify tool"
+  "Fix the stop button on Mac"
+  "Make the window remember its size"
+
+------------------------------------------------------------
+STEP 4 - GitHub builds everything
+------------------------------------------------------------
+The moment you push, GitHub starts building. Watch it at:
+
+  github.com/Kamiko-Weeb/nova/actions
+
+Four jobs run:
+  Lint            - catches obvious mistakes
+  macOS .dmg      - the Mac installer
+  Windows .exe    - the Windows one
+  Publish release - attaches both to a release
+
+Green tick = done. Red X = click it, read the red text, and
+tell Claude what it says.
+
+Takes about five to ten minutes. The Mac job is the slow one.
+
+------------------------------------------------------------
+STEP 5 - Check the downloads
+------------------------------------------------------------
+The download buttons always point at the newest release, so
+they update themselves once the build finishes:
+
+  github.com/Kamiko-Weeb/nova/releases/latest
+
+NOTE: the download page (index.html) and its links only work
+for other people if the repo is PUBLIC. While it is private,
+only you can download them, and only while signed in.
+
+============================================================
+QUICK REFERENCE - just the commands
+============================================================
+
+cd C:\Users\User\OneDrive\Documents\Claude\nova
+notepad version.txt          (bump the number, save)
+git add .
+git commit -m "your message here"
+git push
+
+Then watch: github.com/Kamiko-Weeb/nova/actions
+
+============================================================
+IF SOMETHING BREAKS
+============================================================
+
+"refusing to allow an OAuth App to ... workflow"
+    Your GitHub login cannot change build files. Run once:
+        gh auth refresh -h github.com -s workflow
+    then push again.
+
+"Everything up-to-date" but nothing built
+    You did not actually commit. Run `git status` - if it
+    lists files in red, you missed `git add .`
+
+The Mac build fails but Windows works
+    Usually the AppleScript or the .dmg script. Copy the red
+    text from the Actions log and hand it to Claude.
+
+The app opens and immediately closes
+    Run it from a terminal to see the error:
+        Windows:  python main.py gui
+        Mac:      /Applications/Nova.app/Contents/MacOS/Nova
+
+Mac says "Nova is damaged and can't be opened"
+    Gatekeeper, because the app is not signed with a paid
+    Apple Developer ID. Right-click the app -> Open -> Open.
+    If that fails, run once:
+        xattr -cr /Applications/Nova.app
+
+============================================================

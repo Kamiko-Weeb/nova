@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — an agent that does what you tell it</title>
+<style>
+  :root {
+    --bg: #13151a;
+    --panel: #1b1e26;
+    --field: #232734;
+    --fg: #e6e8ee;
+    --muted: #8b93a7;
+    --accent: #76b3ff;
+    --warn: #ffcc66;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 0 20px 80px;
+  }
+  main { width: 100%; max-width: 720px; }
+
+  header { text-align: center; padding: 72px 0 8px; }
+  .mark { width: 96px; height: 96px; }
+  h1 {
+    font-size: clamp(2.4rem, 8vw, 3.4rem);
+    letter-spacing: -0.03em;
+    margin: 18px 0 6px;
+  }
+  .tagline { color: var(--muted); font-size: 1.1rem; margin: 0; }
+
+  .downloads {
+    display: flex; flex-wrap: wrap; gap: 14px;
+    justify-content: center; margin: 44px 0 10px;
+  }
+  .btn {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 16px 30px; border-radius: 12px;
+    text-decoration: none; min-width: 210px;
+    border: 1px solid transparent; transition: transform .12s ease, filter .12s ease;
+  }
+  .btn:hover { transform: translateY(-2px); filter: brightness(1.08); }
+  .btn strong { font-size: 1.05rem; }
+  .btn span { font-size: .82rem; opacity: .75; }
+  .btn-mac { background: var(--accent); color: #0b1220; }
+  .btn-win { background: var(--panel); color: var(--fg); border-color: #2d3444; }
+  .sub { text-align: center; color: var(--muted); font-size: .85rem; margin: 0 0 56px; }
+  .sub a { color: var(--accent); }
+
+  section { margin-bottom: 44px; }
+  h2 {
+    font-size: .8rem; text-transform: uppercase; letter-spacing: .14em;
+    color: var(--muted); font-weight: 600;
+    border-bottom: 1px solid #262b36; padding-bottom: 10px; margin-bottom: 20px;
+  }
+  ul { padding-left: 20px; margin: 0; }
+  li { margin-bottom: 9px; }
+  li b { color: var(--accent); font-weight: 600; }
+  code {
+    background: var(--field); padding: 2px 7px; border-radius: 5px;
+    font: .88em ui-monospace, "Cascadia Mono", Menlo, monospace;
+  }
+  .note {
+    background: var(--panel); border-left: 3px solid var(--warn);
+    padding: 16px 20px; border-radius: 0 8px 8px 0;
+  }
+  .note p { margin: 0 0 8px; }
+  .note p:last-child { margin-bottom: 0; }
+  .steps { counter-reset: s; list-style: none; padding: 0; }
+  .steps li {
+    counter-increment: s; position: relative;
+    padding-left: 38px; margin-bottom: 14px;
+  }
+  .steps li::before {
+    content: counter(s); position: absolute; left: 0; top: 1px;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--field); color: var(--accent);
+    font-size: .8rem; font-weight: 700;
+    display: grid; place-items: center;
+  }
+  footer {
+    text-align: center; color: var(--muted); font-size: .85rem;
+    border-top: 1px solid #262b36; padding-top: 28px;
+  }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+
+  <header>
+    <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+      <rect x="4" y="4" width="92" height="92" rx="22" fill="#1f2430"/>
+      <path d="M50 12 L57 43 L88 50 L57 57 L50 88 L43 57 L12 50 L43 43 Z" fill="#76b3ff"/>
+      <path d="M50 32 L54 46 L68 50 L54 54 L50 68 L46 54 L32 50 L46 46 Z" fill="#e2eeff"/>
+      <path d="M76 70 L78 77 L85 79 L78 81 L76 88 L74 81 L67 79 L74 77 Z" fill="#76b3ff"/>
+    </svg>
+    <h1>Nova</h1>
+    <p class="tagline">An agent that does what you tell it.</p>
+  </header>
+
+  <div class="downloads">
+    <a class="btn btn-mac" href="https://github.com/Kamiko-Weeb/nova/releases/latest/download/Nova.dmg">
+      <strong>Download for Mac</strong>
+      <span>.dmg · Apple Silicon &amp; Intel</span>
+    </a>
+    <a class="btn btn-win" href="https://github.com/Kamiko-Weeb/nova/releases/latest/download/Nova-Windows.zip">
+      <strong>Download for Windows</strong>
+      <span>.zip · Windows 10 &amp; 11</span>
+    </a>
+  </div>
+  <p class="sub">
+    Free · needs a free <a href="https://build.nvidia.com">NVIDIA API key</a> ·
+    <a href="https://github.com/Kamiko-Weeb/nova">source on GitHub</a>
+  </p>
+
+  <section>
+    <h2>What it does</h2>
+    <p>Tell it what you want in plain English and it works out which tools to
+    use and carries it out. No scripting, no macros to record.</p>
+    <ul>
+      <li><b>Runs commands</b> — launches apps, manages processes, queries your system</li>
+      <li><b>Handles files</b> — reads, writes, searches, organises, renames in bulk</li>
+      <li><b>Searches the web</b> — looks things up and reports back</li>
+      <li><b>Sees your screen</b> — reads dialogs, errors, whatever is in front of you</li>
+      <li><b>Drives applications</b> — clicks real buttons by name, not guessed pixels</li>
+      <li><b>Remembers</b> — notes your preferences between sessions</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Setting it up</h2>
+    <ol class="steps">
+      <li>Install it. On Mac, drag Nova to Applications, then
+          <b>right-click → Open</b> the first time. On Windows, unzip and run
+          <code>Nova.exe</code>.</li>
+      <li>Get a free key at <a href="https://build.nvidia.com">build.nvidia.com</a> —
+          sign in, open your profile menu, choose API Keys. It starts with
+          <code>nvapi-</code> and is shown only once.</li>
+      <li>Paste it into the window Nova shows on first launch. That is the whole
+          setup.</li>
+      <li><b>Mac only:</b> allow <b>Accessibility</b> and <b>Screen Recording</b>
+          under System Settings → Privacy &amp; Security, so it can control
+          windows and see the screen.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Before you run it</h2>
+    <div class="note">
+      <p>Nova runs real commands on your computer. By default it stops and asks
+      before anything that changes something, showing you the exact command
+      first.</p>
+      <p>Leave that confirmation on until you trust it with the kind of work you
+      are giving it. It is driven by a language model, and language models are
+      sometimes wrong.</p>
+    </div>
+  </section>
+
+  <footer>
+    Built by <a href="https://github.com/Kamiko-Weeb">Kamiko-Weeb</a> ·
+    Runs on <a href="https://build.nvidia.com">NVIDIA NIM</a>
+  </footer>
+
+</main>
+</body>
+</html>
