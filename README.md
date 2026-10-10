@@ -65,6 +65,68 @@ python main.py gui
 
 > PowerShell 5.1 has no `&&`. Chain commands with `;` instead.
 
+### Launching it the easy way (Windows)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup-shortcuts.ps1
+```
+
+Adds a desktop icon, a Start Menu entry, and a `nova` command that works from
+any folder (`nova`, `nova doctor`, `nova cli`, …). Safe to re-run.
+
+---
+
+## macOS
+
+Nova runs on macOS with the same tools. The window-control layer is the one
+platform-specific piece: Windows uses pywinauto against the UI Automation tree,
+macOS uses AppleScript against the Accessibility API. **The tool names are
+identical on both**, so the agent behaves the same either way — and there is an
+extra `run_applescript` escape hatch on Mac for scriptable apps, Finder, Mail
+and the like.
+
+**From a checkout:**
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 main.py gui
+```
+
+**As an installed app:** download the `.dmg` from the
+[Releases page](../../releases), drag Nova to Applications, then **right-click →
+Open** the first time (it is not signed with a paid Apple Developer ID, so
+Gatekeeper objects once).
+
+Two permissions are needed, both under System Settings → Privacy & Security:
+
+| Permission | Enables |
+|---|---|
+| **Accessibility** | window control, mouse, keyboard |
+| **Screen Recording** | `see_screen` |
+
+macOS prompts the first time each is used. If the window tools start failing,
+ask Nova to run `accessibility_status` — it reports what is missing and how to
+fix it.
+
+An installed app cannot be told to edit a file inside its own bundle, so on
+first launch Nova asks for your NVIDIA key in a window and saves it to
+`~/.nova/.env`. Notes and logs go there too, rather than into the bundle.
+
+### Building the installers
+
+Tag a version and CI does the rest:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+GitHub Actions builds a macOS `.dmg` on a Mac runner and a Windows `.exe`, and
+attaches both to the release. To build the `.dmg` locally on a Mac instead:
+
+```bash
+bash packaging/build-macos.sh
+```
+
 ---
 
 ## How it works
