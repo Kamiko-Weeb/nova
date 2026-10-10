@@ -1,0 +1,20 @@
+# Secrets - .env holds your live NVIDIA API key. Never commit it.
+.env
+
+# Personal / machine-local state
+memory/
+logs/
+nova-icon-preview.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Build output
+build/
+dist/
+*.dmg
+*.app

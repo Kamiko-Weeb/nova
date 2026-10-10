@@ -1,0 +1,30 @@
+Nova for macOS
+==============
+
+1. Drag Nova into the Applications folder.
+
+2. The first launch is blocked by Gatekeeper, because this app is not signed
+   with a paid Apple Developer ID. To get past it:
+
+       Right-click (or Control-click) Nova  ->  Open  ->  Open
+
+   You only have to do this once. Double-clicking works from then on.
+
+3. Nova asks for an NVIDIA API key on first run. It is free:
+   https://build.nvidia.com  ->  sign in  ->  profile menu  ->  API Keys.
+   The key starts with "nvapi-" and is shown only once, so copy it straight
+   away. Nova saves it to ~/.nova/.env
+
+4. Two macOS permissions are needed for the full feature set. macOS will
+   prompt the first time each is used, or set them in advance:
+
+   System Settings -> Privacy & Security -> Accessibility
+       Lets Nova control windows, the mouse and the keyboard.
+
+   System Settings -> Privacy & Security -> Screen Recording
+       Lets Nova see your screen.
+
+   Tick Nova in both lists, then restart it.
+
+Nova runs commands on your Mac. By default it asks before anything that
+changes something. Keep that on until you trust it.

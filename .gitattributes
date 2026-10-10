@@ -1,0 +1,9 @@
+# Normalise line endings. Checked-out shell scripts MUST be LF or macOS and
+# Linux refuse to run them ("bad interpreter").
+* text=auto
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.py   text eol=lf
+*.ps1  text eol=crlf
+*.ico  binary
+*.png  binary
