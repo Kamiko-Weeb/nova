@@ -12,14 +12,24 @@ import sys
 import threading
 import tkinter as tk
 from dataclasses import dataclass, field
+from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import scrolledtext
-from typing import Any
+from typing import Any, Iterable
 
 from .. import permissions
 from ..agent import Event
 from ..app import build_session
 from ..approval import CallbackApprover
+from ..attachments import (
+    DEFAULT_PROMPT,
+    MAX_ATTACHMENTS,
+    add_paths,
+    badge,
+    compose_message,
+    describe,
+    summary_line,
+)
 from ..config import Config
 
 BG = "#13151a"
@@ -33,6 +43,19 @@ AMBER = "#ffcc66"
 RED = "#ff7a7a"
 
 PERMISSION_CHECK_MS = 2000
+
+# Attachment chips. The border gives each chip a visible edge: the fill alone
+# is 1.12:1 against the panel, this border 3.2:1.
+CHIP_BORDER = "#646d86"
+CHIP_HOVER = "#2c3242"
+MAX_CHIPS = 6  # chips shown before "+N more"
+CHIP_NAME_CHARS = 28
+MOD = "Command" if sys.platform == "darwin" else "Control"  # for key bindings
+KEYS = "⌘" if sys.platform == "darwin" else "Ctrl+"  # for people
+ATTACH_HINT = (
+    f"Attach files ({KEYS}O). You can also drag them onto the window, "
+    f"or paste a screenshot with {KEYS}V."
+)
 
 
 def _font(size: int, *, bold: bool = False, mono: bool = False) -> tkfont.Font:
@@ -64,6 +87,8 @@ class NovaWindow:
         self.streaming = False
         self.pending_approval: ApprovalRequest | None = None
 
+        self.attachments: list[Path] = []
+
         self.approver = CallbackApprover(self._request_approval)
         self.session = build_session(
             cfg, approver=self.approver, on_event=self._from_worker
@@ -89,7 +114,8 @@ class NovaWindow:
 
         body = _font(10)
         bold = _font(10, bold=True)
-        small = _font(9)
+        small = self.small_font = _font(9)
+        self.badge_font = _font(9, bold=True)
         mono = _font(9, mono=True)
 
         header = tk.Frame(self.root, bg=PANEL, height=44)
@@ -117,10 +143,7 @@ class NovaWindow:
             self.permissions_button.pack(side="right")
             self.permissions_button.bind("<Button-1>", self._fix_permissions)
             self.permissions_button.bind("<Enter>", self._describe_permissions)
-            self.permissions_button.bind(
-                "<Leave>",
-                lambda _e: self.status.configure(text="Working..." if self.busy else "Ready"),
-            )
+            self.permissions_button.bind("<Leave>", lambda _e: self._restore_status())
 
         self.transcript = scrolledtext.ScrolledText(
             self.root, wrap="word", bg=BG, fg=FG, insertbackground=FG,
@@ -137,7 +160,10 @@ class NovaWindow:
                                    lmargin1=16, lmargin2=16)
         self.transcript.tag_config("error", foreground=RED)
 
-        footer = tk.Frame(self.root, bg=PANEL)
+        # Attachment chips sit above the message box, packed only while there
+        # are any (see _render_chips).
+        self.chip_row = tk.Frame(self.root, bg=PANEL)
+        footer = self.footer = tk.Frame(self.root, bg=PANEL)
         footer.pack(fill="x")
 
         self.entry = tk.Text(
@@ -148,12 +174,26 @@ class NovaWindow:
         self.entry.bind("<Return>", self._on_return)
         self.entry.bind("<Shift-Return>", lambda _e: None)
         self.entry.bind("<Escape>", lambda _e: self._stop())
+        self.entry.bind("<BackSpace>", self._on_backspace)
+        # The keyboard way to attach. Bound on the message box too, because its
+        # own Ctrl+O binding (open a new line) would otherwise run first.
+        for widget in (self.entry, self.root):
+            widget.bind(f"<{MOD}-o>", self._choose_files)
         self.entry.focus_set()
 
         # Side by side, so the footer never grows taller than the input box and
         # clips a button off the bottom of the window.
         buttons = tk.Frame(footer, bg=PANEL)
         buttons.pack(side="right", padx=(0, 12), pady=10)
+        self.attach_button = tk.Button(
+            buttons, text="Attach", command=self._choose_files, bg=PANEL, fg=FG,
+            activebackground=PANEL, relief="flat", borderwidth=0, width=7,
+            cursor="hand2", font=bold,
+        )
+        self.attach_button.pack(side="left", padx=(0, 8), ipady=10)
+        # Hovering explains the ways to attach that have no button of their own.
+        self.attach_button.bind("<Enter>", lambda _e: self.status.configure(text=ATTACH_HINT))
+        self.attach_button.bind("<Leave>", lambda _e: self._restore_status())
         self.stop_button = tk.Button(
             buttons, text="Stop", command=self._stop, bg="#3a2a2f", fg=RED,
             activebackground="#4a3238", relief="flat", borderwidth=0, width=7,
@@ -212,6 +252,110 @@ class NovaWindow:
             f"opened, so it can {first.purpose}.{restart}"
         )
 
+    # ------------------------------------------------------------ attachments
+    def _choose_files(self, _event: tk.Event | None = None) -> str:
+        from tkinter import filedialog
+
+        self._add_attachments(
+            filedialog.askopenfilenames(parent=self.root, title="Attach files")
+        )
+        return "break"  # as a shortcut, it must not also reach the message box
+
+    def _add_attachments(self, candidates: Iterable[str | Path]) -> None:
+        before = len(self.attachments)
+        self.attachments, left_out = add_paths(self.attachments, candidates)
+        added = self.attachments[before:]
+        self._render_chips()
+        if left_out:
+            plural = "s" if left_out != 1 else ""
+            self.status.configure(
+                text=f"Left out {left_out} file{plural}: at most {MAX_ATTACHMENTS} per message."
+            )
+        elif len(added) == 1:
+            self.status.configure(text=f"Attached {added[0].name}")
+        elif added:
+            self.status.configure(text=f"Attached {len(added)} files")
+        self.entry.focus_set()
+
+    def _remove_attachment(self, path: Path) -> None:
+        self.attachments = [p for p in self.attachments if p != path]
+        self._render_chips()
+        self._restore_status()
+
+    def _on_backspace(self, _event: tk.Event | None = None) -> str | None:
+        """Backspace in an empty message box takes off the last attachment."""
+        if self.attachments and not self.entry.get("1.0", "end-1c"):
+            self._remove_attachment(self.attachments[-1])
+            return "break"
+        return None
+
+    def _render_chips(self) -> None:
+        for child in self.chip_row.winfo_children():
+            child.destroy()
+        if not self.attachments:
+            self.chip_row.pack_forget()
+            return
+        for path in self.attachments[:MAX_CHIPS]:
+            self._make_chip(path)
+        hidden = len(self.attachments) - MAX_CHIPS
+        if hidden > 0:
+            tk.Label(
+                self.chip_row, text=f"+{hidden} more", bg=PANEL, fg=MUTED,
+                font=self.small_font,
+            ).pack(side="left", pady=(8, 0))
+        self.chip_row.pack(fill="x", padx=12, before=self.footer)
+
+    def _make_chip(self, path: Path) -> None:
+        """One attachment: a type tag, its name, and a ✕ that removes it.
+        Hovering anywhere on it shows the full path and size."""
+        name = path.name + ("/" if path.is_dir() else "")
+        if len(name) > CHIP_NAME_CHARS:
+            name = name[: CHIP_NAME_CHARS - 1] + "…"
+        chip = tk.Frame(
+            self.chip_row, bg=FIELD, highlightthickness=1,
+            highlightbackground=CHIP_BORDER, highlightcolor=CHIP_BORDER,
+        )
+        chip.pack(side="left", padx=(0, 8), pady=(8, 0))
+        tk.Label(chip, text=badge(path), bg=FIELD, fg=ACCENT, font=self.badge_font).pack(
+            side="left", padx=(8, 4), pady=4
+        )
+        tk.Label(chip, text=name, bg=FIELD, fg=FG, font=self.small_font).pack(
+            side="left", pady=4
+        )
+        remove = tk.Label(
+            chip, text="✕", bg=FIELD, fg=MUTED, font=self.small_font, cursor="hand2",
+            padx=8, pady=4,
+        )
+        remove.pack(side="left")
+        remove.bind("<Button-1>", lambda _e: self._remove_attachment(path))
+        remove.bind("<Enter>", lambda _e: remove.configure(fg=RED))
+        remove.bind("<Leave>", lambda _e: remove.configure(fg=MUTED))
+
+        parts = [chip, *chip.winfo_children()]
+
+        def paint(fill: str, edge: str) -> None:
+            for widget in parts:
+                widget.configure(bg=fill)
+            chip.configure(highlightbackground=edge, highlightcolor=edge)
+
+        def enter(_event: tk.Event) -> None:
+            # The fill change alone is too faint to notice; the edge makes it clear.
+            paint(CHIP_HOVER, MUTED)
+            self.status.configure(text=describe(path))
+
+        def leave(_event: tk.Event) -> None:
+            # Moving between the chip's own parts is not leaving the chip.
+            if self.root.winfo_containing(*self.root.winfo_pointerxy()) not in parts:
+                paint(FIELD, CHIP_BORDER)
+                self._restore_status()
+
+        for widget in parts:
+            widget.bind("<Enter>", enter, add="+")
+            widget.bind("<Leave>", leave, add="+")
+
+    def _restore_status(self) -> None:
+        self.status.configure(text="Working..." if self.busy else "Ready")
+
     # ------------------------------------------------------------- transcript
     def _write(self, text: str, tag: str = "text") -> None:
         self.transcript.configure(state="normal")
@@ -263,12 +407,18 @@ class NovaWindow:
     def _submit(self) -> None:
         if self.busy:
             return
-        instruction = self.entry.get("1.0", "end").strip()
-        if not instruction:
+        typed = self.entry.get("1.0", "end").strip()
+        if not typed and not self.attachments:
             return
+        instruction = compose_message(typed, self.attachments)
         self.entry.delete("1.0", "end")
         self._write("You\n", "you")
-        self._write(instruction + "\n\n", "text")
+        self._write((typed or DEFAULT_PROMPT) + "\n", "text")
+        if self.attachments:
+            self._write(summary_line(self.attachments) + "\n", "muted")
+        self._write("\n", "text")
+        self.attachments = []
+        self._render_chips()
         self._set_busy(True)
 
         self.worker = threading.Thread(

@@ -8,10 +8,13 @@ from nova.attachments import (
     DEFAULT_PROMPT,
     MAX_ATTACHMENTS,
     add_paths,
+    badge,
     compose_message,
+    describe,
     format_size,
     kind_of,
     save_pasted_image,
+    summary_line,
 )
 
 
@@ -145,3 +148,49 @@ def test_save_pasted_image_keeps_only_the_newest(tmp_path):
     assert "paste-old-000.png" not in pastes and "paste-old-005.png" not in pastes
     assert "paste-old-006.png" in pastes
     assert not_a_paste.exists()
+
+
+# --- text the window shows for attachments ---------------------------------
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        ("report.pdf", "PDF"),
+        ("IMG_2041.HEIC", "HEIC"),
+        ("deck.pptx", "PPTX"),
+        ("photo.jpeg", "JPEG"),
+        ("notes.markdown", "FILE"),  # too long to be a useful tag
+        ("Makefile", "FILE"),
+    ],
+)
+def test_badge_names_the_file_type(tmp_path, name, expected):
+    path = tmp_path / name
+    path.write_bytes(b"x")
+    assert badge(path) == expected
+
+
+def test_badge_for_a_folder(tmp_path):
+    assert badge(tmp_path) == "FOLDER"
+
+
+def test_describe_gives_path_kind_and_size(tmp_path):
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(b"x" * 2048)
+    assert describe(pdf) == f"{pdf} (PDF document, 2.0 KB)"
+    assert describe(tmp_path) == f"{tmp_path}/ (folder)"
+
+
+def test_summary_line_names_each_file(tmp_path):
+    assert summary_line([tmp_path / "a.pdf", tmp_path / "b.png"]) == "Attached: a.pdf, b.png"
+
+
+def test_summary_line_marks_folders(tmp_path):
+    folder = tmp_path / "receipts"
+    folder.mkdir()
+    assert summary_line([folder]) == "Attached: receipts/"
+
+
+def test_summary_line_collapses_long_lists(tmp_path):
+    paths = [tmp_path / f"f{i}.txt" for i in range(9)]
+    assert summary_line(paths) == (
+        "Attached: f0.txt, f1.txt, f2.txt, f3.txt, f4.txt, f5.txt and 3 more"
+    )

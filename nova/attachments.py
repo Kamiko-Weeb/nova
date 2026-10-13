@@ -16,6 +16,7 @@ from .config import DATA_ROOT
 ATTACHMENTS_DIR = DATA_ROOT / "attachments"
 MAX_ATTACHMENTS = 50
 KEEP_PASTES = 50
+SUMMARY_NAMES = 6  # names listed under a sent message before "and N more"
 DEFAULT_PROMPT = "Take a look at the attached files."
 HEADER = "Attached files (open them with read_file, or view_image for pictures):"
 
@@ -55,15 +56,36 @@ def kind_of(path: Path) -> str:
     return DOCUMENT_KINDS.get(suffix, "file")
 
 
-def _listing(path: Path) -> str:
+def describe(path: Path) -> str:
+    """The full path with its kind and size: '/x/report.pdf (PDF document, 2.1 MB)'."""
     kind = kind_of(path)
     if kind == "folder":
-        return f"- {path}/ (folder)"
+        return f"{path}/ (folder)"
     try:
         size = format_size(path.stat().st_size)
     except OSError:  # deleted or moved since it was attached
-        return f"- {path} ({kind})"
-    return f"- {path} ({kind}, {size})"
+        return f"{path} ({kind})"
+    return f"{path} ({kind}, {size})"
+
+
+def badge(path: Path) -> str:
+    """A short type tag for a chip: the extension in capitals, or FOLDER / FILE."""
+    if path.is_dir():
+        return "FOLDER"
+    extension = path.suffix[1:].upper()
+    return extension if 0 < len(extension) <= 4 else "FILE"
+
+
+def summary_line(paths: Sequence[Path]) -> str:
+    """The muted line under a sent message: 'Attached: a.pdf, b.png'."""
+    names = [path.name + ("/" if path.is_dir() else "") for path in paths]
+    hidden = len(names) - SUMMARY_NAMES
+    more = f" and {hidden} more" if hidden > 0 else ""
+    return f"Attached: {', '.join(names[:SUMMARY_NAMES])}{more}"
+
+
+def _listing(path: Path) -> str:
+    return f"- {describe(path)}"
 
 
 def compose_message(text: str, paths: Sequence[Path]) -> str:
