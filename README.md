@@ -316,13 +316,14 @@ else, and shows what you currently have configured.
 Defaults:
 
 ```
-NOVA_MODEL=nvidia/nemotron-3-ultra-550b-a55b           # must support tool calling
+NOVA_MODEL=nvidia/nemotron-3-super-120b-a12b           # must support tool calling
 NOVA_VISION_MODEL=meta/llama-3.2-11b-vision-instruct   # must accept images
 ```
 
-Nemotron is NVIDIA's line built for agentic work. Lighter alternatives:
-`nvidia/nemotron-3-super-120b-a12b`,
-`nvidia/nemotron-3.5-lightning-30b-a3b`, or `moonshotai/kimi-k3`.
+Nemotron is NVIDIA's line built for agentic work. Alternatives:
+`nvidia/nemotron-3-ultra-550b-a55b` (slower, smarter),
+`nvidia/nemotron-3.5-lightning-30b-a3b` (faster, cheaper), or
+`moonshotai/kimi-k3`.
 
 The catalogue moves, so trust `python main.py models` over any list written
 down, including this one. Models named in NVIDIA's own documentation are
