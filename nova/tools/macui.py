@@ -19,6 +19,50 @@ from .registry import Registry, boolean, integer, schema, string, truncate
 
 SCRIPT_TIMEOUT = 30
 MAX_CONTROLS = 120
+WALK_LIMIT = 2000  # most elements visited when walking a window's UI tree
+
+# AppleScript handlers prepended to scripts that look inside a window.
+#
+# descendantsOf: `entire contents` returns nothing on recent macOS (seen on 27),
+# so walk the tree breadth-first through `UI elements` instead.
+#
+# labelOf: a missing name comes back as `missing value`, which coerces to the
+# text "missing value" rather than "". Icon-only controls - most toolbar
+# buttons, many text fields - carry their label in the description instead.
+AX_HELPERS = """
+on labelOf(theElement)
+    tell application "System Events"
+        try
+            set theName to name of theElement
+            if theName is not missing value and theName is not "" then return theName as text
+        end try
+        try
+            set theDescription to description of theElement
+            if theDescription is not missing value then return theDescription as text
+        end try
+    end tell
+    return ""
+end labelOf
+
+on descendantsOf(theRoot, maxCount)
+    tell application "System Events"
+        set found to {}
+        set pending to {theRoot}
+        set i to 1
+        repeat while i <= (count of pending) and (count of found) < maxCount
+            set node to item i of pending
+            set i to i + 1
+            try
+                repeat with kid in (UI elements of node)
+                    set end of found to contents of kid
+                    set end of pending to contents of kid
+                end repeat
+            end try
+        end repeat
+        return found
+    end tell
+end descendantsOf
+"""
 
 # Accessibility roles worth reporting: things a person could click or read.
 USEFUL_ROLES = {
@@ -67,6 +111,30 @@ def run_applescript(script: str, timeout: int = SCRIPT_TIMEOUT) -> tuple[bool, s
     return True, proc.stdout.strip()
 
 
+_accessibility_confirmed = False
+
+
+def accessibility_denied() -> str | None:
+    """Return why Accessibility is off, or None once it is confirmed on.
+
+    The probe reads another app's menu bar, which only the Accessibility API can
+    answer. Asking System Events for a process name succeeds without the
+    permission, so it proves nothing - and the window tools below swallow the
+    resulting errors, reporting "no windows" instead of "permission missing".
+    """
+    global _accessibility_confirmed
+    if _accessibility_confirmed:
+        return None
+    ok, out = run_applescript(
+        'tell application "System Events" to tell process "Finder" '
+        "to return name of menu bar item 1 of menu bar 1"
+    )
+    if ok:
+        _accessibility_confirmed = True
+        return None
+    return out
+
+
 def register(registry: Registry, cfg: Config) -> None:
     if sys.platform != "darwin" or not cfg.allow_desktop_control:
         return
@@ -82,10 +150,8 @@ def register(registry: Registry, cfg: Config) -> None:
         parameters=schema(),
     )
     def accessibility_status() -> str:
-        ok, out = run_applescript(
-            'tell application "System Events" to return name of first process'
-        )
-        if ok:
+        out = accessibility_denied()
+        if out is None:
             return (
                 "Accessibility access is granted; the window-control tools should "
                 "work."
@@ -109,6 +175,9 @@ def register(registry: Registry, cfg: Config) -> None:
         parameters=schema(),
     )
     def list_windows() -> str:
+        denied = accessibility_denied()
+        if denied:
+            return f"ERROR: {denied}"
         script = """
         tell application "System Events"
             set output to ""
@@ -158,8 +227,11 @@ def register(registry: Registry, cfg: Config) -> None:
         ),
     )
     def inspect_window(title: str, max_items: int = MAX_CONTROLS) -> str:
+        denied = accessibility_denied()
+        if denied:
+            return f"ERROR: {denied}"
         app = _escape(title.strip())
-        script = f"""
+        script = AX_HELPERS + f"""
         tell application "System Events"
             tell process "{app}"
                 set output to ""
@@ -168,18 +240,10 @@ def register(registry: Registry, cfg: Config) -> None:
                 on error
                     return "NOWINDOW"
                 end try
-                repeat with element in (entire contents of theWindow)
+                repeat with element in my descendantsOf(theWindow, {WALK_LIMIT})
                     try
                         set elementRole to role of element
-                        set elementName to ""
-                        try
-                            set elementName to name of element as text
-                        end try
-                        if elementName is "" then
-                            try
-                                set elementName to description of element as text
-                            end try
-                        end if
+                        set elementName to my labelOf(element)
                         set elementPos to position of element
                         set elementSize to size of element
                         set output to output & elementRole & "|" & elementName ¬
@@ -240,8 +304,11 @@ def register(registry: Registry, cfg: Config) -> None:
         parameters=schema({"title": string("The application name.")}, ["title"]),
     )
     def read_window_text(title: str) -> str:
+        denied = accessibility_denied()
+        if denied:
+            return f"ERROR: {denied}"
         app = _escape(title.strip())
-        script = f"""
+        script = AX_HELPERS + f"""
         tell application "System Events"
             tell process "{app}"
                 set output to ""
@@ -250,16 +317,18 @@ def register(registry: Registry, cfg: Config) -> None:
                 on error
                     return "NOWINDOW"
                 end try
-                repeat with element in (entire contents of theWindow)
+                repeat with element in my descendantsOf(theWindow, {WALK_LIMIT})
                     try
                         if role of element is in {{"AXStaticText", "AXTextField", "AXTextArea"}} then
                             set elementValue to ""
                             try
-                                set elementValue to value of element as text
+                                set rawValue to value of element
+                                if rawValue is not missing value then set elementValue to rawValue as text
                             end try
                             if elementValue is "" then
                                 try
-                                    set elementValue to name of element as text
+                                    set rawName to name of element
+                                    if rawName is not missing value then set elementValue to rawName as text
                                 end try
                             end if
                             if elementValue is not "" then
@@ -342,7 +411,10 @@ def register(registry: Registry, cfg: Config) -> None:
             else ""
         )
         # Exact name first, then a contains-match, so partial names still work.
-        script = f"""
+        # The name is read before clicking: a click that closes a dialog or
+        # relabels the button would otherwise turn a success into an error, and
+        # the model would click again.
+        script = AX_HELPERS + f"""
         tell application "System Events"
             tell process "{app}"
                 set frontmost to true
@@ -350,18 +422,20 @@ def register(registry: Registry, cfg: Config) -> None:
                 set matches to (every UI element of theWindow whose name is "{target}"{role_test})
                 if (count of matches) is 0 then
                     set matches to {{}}
-                    repeat with element in (entire contents of theWindow)
+                    repeat with element in my descendantsOf(theWindow, {WALK_LIMIT})
                         try
-                            if name of element contains "{target}" then
-                                set end of matches to element
+                            if my labelOf(element) contains "{target}" then
+                                set end of matches to contents of element
                             end if
                         end try
                     end repeat
                 end if
                 if (count of matches) is 0 then return "NOTFOUND"
-                click (item 1 of matches)
-                {"click (item 1 of matches)" if double else ""}
-                return "CLICKED " & (name of (item 1 of matches))
+                set theControl to item 1 of matches
+                set controlName to name of theControl as text
+                click theControl
+                {"click theControl" if double else ""}
+                return "CLICKED " & controlName
             end tell
         end tell
         """
@@ -399,7 +473,7 @@ def register(registry: Registry, cfg: Config) -> None:
         app = _escape(title.strip())
         target = _escape(control.strip())
         value = _escape(text)
-        script = f"""
+        script = AX_HELPERS + f"""
         tell application "System Events"
             tell process "{app}"
                 set frontmost to true
@@ -407,10 +481,10 @@ def register(registry: Registry, cfg: Config) -> None:
                 set matches to (every UI element of theWindow whose name is "{target}")
                 if (count of matches) is 0 then
                     set matches to {{}}
-                    repeat with element in (entire contents of theWindow)
+                    repeat with element in my descendantsOf(theWindow, {WALK_LIMIT})
                         try
-                            if name of element contains "{target}" then
-                                set end of matches to element
+                            if my labelOf(element) contains "{target}" then
+                                set end of matches to contents of element
                             end if
                         end try
                     end repeat
