@@ -18,6 +18,9 @@ from .registry import Registry, integer, schema, string
 # comfortably under the limit (base64 inflates by ~4/3).
 MAX_JPEG_BYTES = 120_000
 MAX_WIDTH = 1280
+# see_screen keeps a copy of what the vision model was shown, for debugging.
+# Only the most recent are kept; files saved with save_screenshot are left alone.
+KEEP_SCREENSHOTS = 20
 
 
 def _encode(image, quality: int = 72) -> bytes:
@@ -97,6 +100,9 @@ def register(registry: Registry, cfg: Config, llm: LLM) -> None:
             shots_dir.mkdir(parents=True, exist_ok=True)
             stamp = time.strftime("%Y%m%d-%H%M%S")
             Path(shots_dir / f"screen-{stamp}.jpg").write_bytes(jpeg)
+            # The timestamped names sort oldest first.
+            for old in sorted(shots_dir.glob("screen-*.jpg"))[:-KEEP_SCREENSHOTS]:
+                old.unlink(missing_ok=True)
         except OSError:
             pass
 
