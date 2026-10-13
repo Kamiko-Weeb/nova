@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from nova.config import PROJECT_ROOT, Config
+from nova.config import PROJECT_ROOT, Config, active_env_file
 
 
 def cmd_gui(cfg: Config) -> int:
@@ -71,7 +71,7 @@ def cmd_doctor(cfg: Config) -> int:
     print(f"python            {sys.version.split()[0]}")
     print(f"project           {PROJECT_ROOT}")
     print(f"workspace         {cfg.workspace}")
-    print(f"env file          {'found' if (PROJECT_ROOT / '.env').exists() else 'MISSING'}")
+    print(f"env file          {active_env_file() or 'none - using defaults'}")
 
     if cfg.has_api_key:
         print(f"NVIDIA_API_KEY    set ({cfg.api_key[:8]}...{cfg.api_key[-4:]})")
@@ -92,10 +92,12 @@ def cmd_doctor(cfg: Config) -> int:
         "mss": "screen capture (see_screen)",
         "PIL": "image handling (see_screen)",
         "pyautogui": "mouse and keyboard control",
-        "pywinauto": "precise window control (inspect_window, click_control)",
         "discord": "Discord bot",
-        "send2trash": "safe deletes to Recycle Bin",
+        "send2trash": "safe deletes, to the Trash or Recycle Bin",
     }
+    # macOS gets precise window control from AppleScript, which needs no package.
+    if sys.platform == "win32":
+        optional["pywinauto"] = "precise window control (inspect_window, click_control)"
     for module, why in required.items():
         try:
             __import__(module)
@@ -157,35 +159,24 @@ def cmd_doctor(cfg: Config) -> int:
 
 
 def cmd_do(cfg: Config, instruction: str) -> int:
-    from nova.agent import Agent
-    from nova.approval import AlwaysAllow, CallbackApprover
+    from nova.app import build_session
+    from nova.approval import CallbackApprover
     from nova.interfaces.cli import Printer, _ask
-    from nova.llm import LLM
-    from nova.memory import Memory
-    from nova.tools import build_registry
 
-    llm = LLM(cfg)
-    memory = Memory(cfg.memory_path)
     printer = Printer()
-    agent = Agent(
-        cfg=cfg,
-        llm=llm,
-        registry=build_registry(cfg, llm, memory),
-        approver=CallbackApprover(_ask) if cfg.confirm_dangerous else AlwaysAllow(),
-        on_event=printer,
-        memory=memory,
-    )
+    session = build_session(cfg, approver=CallbackApprover(_ask), on_event=printer)
     try:
-        reply = agent.run(instruction)
+        reply = session.agent.run(instruction)
     except KeyboardInterrupt:
-        agent.stop()
+        session.agent.stop()
         print("\nInterrupted.")
         return 1
+    finally:
+        session.finish()
     if printer.streaming:
         print()
     else:
         print(reply)
-    llm.flush_usage()
     return 0
 
 
