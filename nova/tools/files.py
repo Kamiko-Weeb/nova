@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import fnmatch
 import shutil
+import sys
 from pathlib import Path
 
 from ..config import Config
 from .registry import Registry, boolean, integer, schema, string, truncate
 
 TEXT_READ_LIMIT = 200_000
+# Directories not worth descending into when searching.
+SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv", "AppData"}
+TRASH = "Recycle Bin" if sys.platform == "win32" else "Trash"
 
 
 def register(registry: Registry, cfg: Config) -> None:
@@ -109,9 +113,8 @@ def register(registry: Registry, cfg: Config) -> None:
         if not base.is_dir():
             return f"ERROR: {base} is not a directory."
         hits: list[str] = []
-        skip = {"node_modules", ".git", "__pycache__", ".venv", "venv", "AppData"}
         for current, dirnames, filenames in base.walk(on_error=lambda _e: None):
-            dirnames[:] = [d for d in dirnames if d not in skip]
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
             for name in filenames:
                 if fnmatch.fnmatch(name.lower(), pattern.lower()):
                     hits.append(str(current / name))
@@ -141,11 +144,12 @@ def register(registry: Registry, cfg: Config) -> None:
         root: str, query: str, file_pattern: str = "*", max_results: int = 80
     ) -> str:
         base = resolve(root)
+        if not base.is_dir():
+            return f"ERROR: {base} is not a directory."
         needle = query.lower()
         hits: list[str] = []
-        skip = {"node_modules", ".git", "__pycache__", ".venv", "venv", "AppData"}
         for current, dirnames, filenames in base.walk(on_error=lambda _e: None):
-            dirnames[:] = [d for d in dirnames if d not in skip]
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
             for name in filenames:
                 if not fnmatch.fnmatch(name.lower(), file_pattern.lower()):
                     continue
@@ -236,19 +240,19 @@ def register(registry: Registry, cfg: Config) -> None:
         "delete_path",
         description=(
             "Delete a file or directory. Prefer recycle=true so the item goes to the "
-            "Recycle Bin and can be restored; recycle=false is permanent."
+            f"{TRASH} and can be restored; recycle=false is permanent."
         ),
         parameters=schema(
             {
                 "path": string("Path to delete."),
-                "recycle": boolean("Send to Recycle Bin instead of erasing.", default=True),
+                "recycle": boolean(f"Send to the {TRASH} instead of erasing.", default=True),
             },
             ["path"],
         ),
         dangerous=True,
         preview=lambda a: (
             f"DELETE {a.get('path')} "
-            f"({'to Recycle Bin' if a.get('recycle', True) else 'PERMANENTLY'})"
+            f"({f'to the {TRASH}' if a.get('recycle', True) else 'PERMANENTLY'})"
         ),
     )
     def delete_path(path: str, recycle: bool = True) -> str:
@@ -260,7 +264,7 @@ def register(registry: Registry, cfg: Config) -> None:
                 from send2trash import send2trash
 
                 send2trash(str(target))
-                return f"Sent {target} to the Recycle Bin."
+                return f"Sent {target} to the {TRASH}."
             except ImportError:
                 return (
                     "ERROR: recycle=true needs the 'send2trash' package "

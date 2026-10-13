@@ -8,6 +8,7 @@ Event until the dialog comes back.
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 import tkinter as tk
 from dataclasses import dataclass, field
@@ -29,6 +30,17 @@ ACCENT = "#76b3ff"
 GREEN = "#7bd88f"
 AMBER = "#ffcc66"
 RED = "#ff7a7a"
+
+
+def _font(size: int, *, bold: bool = False, mono: bool = False) -> tkfont.Font:
+    """Segoe UI and Cascadia Mono only exist on Windows. Elsewhere Tk quietly
+    substitutes the system font, which left bold text regular and code in a
+    proportional face, so ask for the platform's own fonts instead."""
+    if sys.platform == "win32":
+        family = "Cascadia Mono" if mono else "Segoe UI Semibold" if bold else "Segoe UI"
+        return tkfont.Font(family=family, size=size)
+    family = "Menlo" if mono else tkfont.nametofont("TkDefaultFont").actual("family")
+    return tkfont.Font(family=family, size=size, weight="bold" if bold else "normal")
 
 
 @dataclass
@@ -70,16 +82,15 @@ class NovaWindow:
         self.root.minsize(640, 440)
         self.root.configure(bg=BG)
 
-        body = tkfont.Font(family="Segoe UI", size=10)
-        bold = tkfont.Font(family="Segoe UI Semibold", size=10)
-        small = tkfont.Font(family="Segoe UI", size=9)
-        mono = tkfont.Font(family="Cascadia Mono", size=9)
+        body = _font(10)
+        bold = _font(10, bold=True)
+        small = _font(9)
+        mono = _font(9, mono=True)
 
         header = tk.Frame(self.root, bg=PANEL, height=44)
         header.pack(fill="x")
         tk.Label(
-            header, text="Nova", bg=PANEL, fg=FG,
-            font=tkfont.Font(family="Segoe UI Semibold", size=13),
+            header, text="Nova", bg=PANEL, fg=FG, font=_font(13, bold=True),
         ).pack(side="left", padx=14)
         tk.Label(
             header, text=self.session.subtitle("  ·  "), bg=PANEL, fg=MUTED, font=small
@@ -334,13 +345,13 @@ class NovaWindow:
 
         tk.Label(
             dialog, text=f"Allow {request.tool_name}?", bg=PANEL, fg=FG,
-            font=tkfont.Font(family="Segoe UI Semibold", size=11),
+            font=_font(11, bold=True),
         ).pack(anchor="w", padx=18, pady=(16, 6))
 
         detail = tk.Text(
             dialog, height=min(12, max(3, request.description.count("\n") + 2)),
             width=74, wrap="word", bg=FIELD, fg=FG, relief="flat",
-            font=tkfont.Font(family="Cascadia Mono", size=9), padx=10, pady=8,
+            font=_font(9, mono=True), padx=10, pady=8,
         )
         detail.insert("1.0", request.description)
         detail.configure(state="disabled")
@@ -362,7 +373,7 @@ class NovaWindow:
             return tk.Button(
                 parent, text=text, command=lambda: answer(value), bg=bg, fg=fg,
                 relief="flat", borderwidth=0, cursor="hand2", padx=14, pady=6,
-                font=tkfont.Font(family="Segoe UI Semibold", size=10),
+                font=_font(10, bold=True),
             )
 
         button(row, "Deny", False, "#3a2a2f", RED).pack(side="right", padx=(8, 0))

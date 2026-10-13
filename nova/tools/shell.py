@@ -9,6 +9,10 @@ from ..config import Config
 from .registry import Registry, format_process, schema, string
 
 IS_WINDOWS = sys.platform == "win32"
+DETACH_HINT = {
+    "win32": "Start-Process",
+    "darwin": "'open -a AppName', or 'nohup command &'",
+}.get(sys.platform, "'nohup command &'")
 
 
 def register(registry: Registry, cfg: Config) -> None:
@@ -74,7 +78,7 @@ def register(registry: Registry, cfg: Config) -> None:
             return (
                 f"ERROR: command exceeded the {cfg.shell_timeout}s timeout and was "
                 "killed. If it is a long-running or interactive program, start it "
-                "detached instead (e.g. Start-Process)."
+                f"detached instead (e.g. {DETACH_HINT})."
             )
         except FileNotFoundError as exc:
             return f"ERROR: could not start the shell: {exc}"

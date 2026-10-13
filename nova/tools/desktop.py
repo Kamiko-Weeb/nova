@@ -14,6 +14,11 @@ from ..config import Config
 from .registry import Registry, integer, schema, string
 
 KEY_INTERVAL = 0.012  # seconds between typed characters
+# Shortcut examples for press_keys, in the platform's own idiom.
+if sys.platform == "darwin":
+    COMBO_EXAMPLES = "'cmd+s', 'cmd+tab', 'cmd+shift+z'"
+else:
+    COMBO_EXAMPLES = "'ctrl+s', 'alt+tab', 'win+r', 'ctrl+shift+escape'"
 
 
 def register(registry: Registry, cfg: Config) -> None:
@@ -147,12 +152,11 @@ def register(registry: Registry, cfg: Config) -> None:
         "press_keys",
         description=(
             "Press a key or a key combination. Pass a single key like 'enter', 'tab', "
-            "'escape', 'f5', or a combination joined by '+' like 'ctrl+s', "
-            "'alt+tab', 'win+r', 'ctrl+shift+escape'."
+            f"'escape', 'f5', or a combination joined by '+' like {COMBO_EXAMPLES}."
         ),
         parameters=schema(
             {
-                "keys": string("The key or combination, e.g. 'ctrl+s'."),
+                "keys": string(f"The key or combination, e.g. {COMBO_EXAMPLES.split(',')[0]}."),
                 "repeat": integer("How many times to press it.", default=1),
             },
             ["keys"],
