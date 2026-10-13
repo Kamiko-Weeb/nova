@@ -182,3 +182,22 @@ class Config:
             "    NVIDIA_API_KEY=nvapi-AbCdEf0123456789...\n\n"
             "(Create that file if it does not exist.)\n"
         )
+
+    def resolve_path(self, raw: str) -> Path:
+        """An absolute path for `raw`; relative paths start at the workspace.
+
+        Raises PermissionError for a path outside the workspace while
+        NOVA_RESTRICT_TO_WORKSPACE is on.
+        """
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = self.workspace / path
+        path = path.resolve()
+        if self.restrict_to_workspace:
+            root = self.workspace.resolve()
+            if root not in path.parents and path != root:
+                raise PermissionError(
+                    f"{path} is outside the allowed workspace ({root}). "
+                    "Set NOVA_RESTRICT_TO_WORKSPACE=false to lift this."
+                )
+        return path

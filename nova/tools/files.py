@@ -6,7 +6,9 @@ import shutil
 import sys
 from pathlib import Path
 
+from ..attachments import IMAGE_SUFFIXES, format_size
 from ..config import Config
+from .documents import DocumentError, extract_text, is_document
 from .registry import Registry, boolean, integer, schema, string, truncate
 
 TEXT_READ_LIMIT = 200_000
@@ -15,27 +17,26 @@ SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv", "AppData"}
 TRASH = "Recycle Bin" if sys.platform == "win32" else "Trash"
 
 
+def _blocked(path: Path) -> str:
+    if sys.platform == "darwin":
+        return (
+            f"macOS blocked access to {path}. Allow it in System Settings > "
+            "Privacy & Security > Files and Folders."
+        )
+    return f"permission denied reading {path}."
+
+
 def register(registry: Registry, cfg: Config) -> None:
-    def resolve(raw: str) -> Path:
-        path = Path(raw).expanduser()
-        if not path.is_absolute():
-            path = cfg.workspace / path
-        path = path.resolve()
-        if cfg.restrict_to_workspace:
-            root = cfg.workspace.resolve()
-            if root not in path.parents and path != root:
-                raise PermissionError(
-                    f"{path} is outside the allowed workspace ({root}). "
-                    "Set NOVA_RESTRICT_TO_WORKSPACE=false to lift this."
-                )
-        return path
+    resolve = cfg.resolve_path
 
     # ------------------------------------------------------------------ read
     @registry.define(
         "read_file",
         description=(
-            "Read a text file and return its contents. Relative paths resolve against "
-            "the workspace directory."
+            "Read a file and return its text with line numbers. Also reads PDF, "
+            "Word (.docx), Excel (.xlsx) and PowerPoint (.pptx) files, and on macOS "
+            ".doc, .rtf and .odt. For pictures use view_image. Relative paths "
+            "resolve against the workspace directory."
         ),
         parameters=schema(
             {
@@ -52,15 +53,33 @@ def register(registry: Registry, cfg: Config) -> None:
             return f"ERROR: {target} does not exist."
         if target.is_dir():
             return f"ERROR: {target} is a directory. Use list_dir."
-        raw = target.read_bytes()[:TEXT_READ_LIMIT]
-        text = raw.decode("utf-8", errors="replace")
+        suffix = target.suffix.lower()
+        if suffix in IMAGE_SUFFIXES:
+            return f"{target} is an image. Use view_image to look at it."
+        try:
+            if is_document(target):
+                extracted = extract_text(target)
+                text, kind = extracted.text, f"{extracted.summary}, "
+            else:
+                raw = target.read_bytes()[:TEXT_READ_LIMIT]
+                if b"\0" in raw[:8192]:
+                    size = format_size(target.stat().st_size)
+                    return (
+                        f"{target}: binary file ({suffix or 'no extension'}, {size}) "
+                        "- read_file can only show text."
+                    )
+                text, kind = raw.decode("utf-8", errors="replace"), ""
+        except DocumentError as exc:
+            return f"ERROR: {exc}"
+        except PermissionError:
+            return f"ERROR: {_blocked(target)}"
         lines = text.splitlines()
         begin = max(0, start_line - 1)
         chunk = lines[begin:] if max_lines <= 0 else lines[begin : begin + max_lines]
         numbered = "\n".join(
             f"{i:>6}\t{line}" for i, line in enumerate(chunk, start=begin + 1)
         )
-        header = f"{target}  ({len(lines)} lines total)"
+        header = f"{target}  ({kind}{len(lines)} lines total)"
         return truncate(f"{header}\n{numbered}")
 
     @registry.define(
