@@ -51,6 +51,7 @@ python3 -m PyInstaller \
   --add-data "$ROOT/.env.example:." \
   --hidden-import tkinter \
   --hidden-import PIL._tkinter_finder \
+  --hidden-import sqlite3 \
   --collect-submodules nova \
   --paths "$ROOT" \
   --distpath "$DIST" \

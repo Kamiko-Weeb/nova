@@ -59,6 +59,7 @@ jobs:
           python -m PyInstaller --noconfirm --clean --windowed
           --name Nova --icon nova.ico
           --hidden-import tkinter --hidden-import PIL._tkinter_finder
+          --hidden-import sqlite3
           --collect-submodules nova --paths .
           packaging/nova_app.py
 

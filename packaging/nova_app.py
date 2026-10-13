@@ -15,6 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 def main() -> int:
+    # In a packaged app sys.executable is Nova itself, not a Python interpreter,
+    # so the run_python tool starts it again with this flag to run its script.
+    if len(sys.argv) == 3 and sys.argv[1] == "--run-python":
+        return _run_script(sys.argv[2])
     try:
         from nova.config import Config
         from nova.interfaces import gui
@@ -27,6 +31,28 @@ def main() -> int:
     except Exception:
         _report("Nova hit an unexpected error", traceback.format_exc())
         return 1
+
+
+def _run_script(path: str) -> int:
+    """Run a script with the bundled interpreter, as `python script.py` would."""
+    import runpy
+
+    # A windowed Windows build may start without stdout/stderr, even when its
+    # parent is capturing them; reopen the inherited handles so print() works.
+    for name, fd in (("stdout", 1), ("stderr", 2)):
+        if getattr(sys, name) is None:
+            try:
+                setattr(sys, name, open(fd, "w", encoding="utf-8", closefd=False))
+            except OSError:
+                pass
+    try:
+        runpy.run_path(path, run_name="__main__")
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else int(exc.code is not None)
+    except BaseException:
+        traceback.print_exc()
+        return 1
+    return 0
 
 
 def _report(title: str, detail: str) -> None:

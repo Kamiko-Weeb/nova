@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..config import Config
+from ..config import FROZEN, Config
 from .registry import Registry, format_process, integer, schema, string
 
 
@@ -41,9 +41,14 @@ def register(registry: Registry, cfg: Config) -> None:
         ) as handle:
             handle.write(code)
             script = Path(handle.name)
+        # A packaged app has no separate interpreter: sys.executable is Nova
+        # itself, which runs the script when given --run-python.
+        command = [sys.executable, str(script)]
+        if FROZEN:
+            command.insert(1, "--run-python")
         try:
             proc = subprocess.run(
-                [sys.executable, str(script)],
+                command,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
