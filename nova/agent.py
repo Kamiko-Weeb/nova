@@ -314,25 +314,29 @@ class Agent:
         )
 
     # ------------------------------------------------------------- housekeep
-    def _trim(self, keep_chars: int = 120_000) -> None:
-        """Drop the oldest turns when the transcript grows too long.
+    def _trim(self, keep_chars: int = 120_000, keep_recent: int = 3) -> None:
+        """Keep the transcript under `keep_chars` when it grows too long.
 
-        The system prompt always stays. Trimming happens at a user message so the
-        assistant/tool pairing stays intact - an orphaned tool result is a 400
-        from the API.
+        Whole turns go first, oldest first: a user message and everything up to
+        the next one, so each tool call keeps its result - an orphaned result is
+        a 400 from the API. The system prompt and the current instruction always
+        stay. If one long task is over the limit on its own, its older tool
+        results are cut down instead, leaving the newest `keep_recent` whole.
         """
-        while self._size() > keep_chars and len(self.messages) > 3:
-            for index in range(1, len(self.messages)):
-                if self.messages[index].get("role") == "user":
-                    cut = index + 1
-                    while cut < len(self.messages) and self.messages[cut].get(
-                        "role"
-                    ) in {"assistant", "tool"}:
-                        cut += 1
-                    del self.messages[index:cut]
-                    break
-            else:
-                return
+        while self._size() > keep_chars:
+            users = [i for i, m in enumerate(self.messages) if m.get("role") == "user"]
+            if len(users) < 2:
+                break
+            del self.messages[users[0] : users[1]]
+
+        older = [m for m in self.messages[:-keep_recent] if m.get("role") == "tool"]
+        for message in older:
+            if self._size() <= keep_chars:
+                break
+            if len(message["content"]) > 300:
+                message["content"] = (
+                    message["content"][:300] + "\n... [trimmed to keep the transcript short]"
+                )
 
     def _size(self) -> int:
         return sum(len(str(message.get("content", ""))) for message in self.messages)
