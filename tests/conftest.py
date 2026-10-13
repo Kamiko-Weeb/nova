@@ -137,3 +137,25 @@ def _fresh_document_cache():
     from nova.tools import documents
 
     documents._extract.cache_clear()
+
+
+@pytest.fixture
+def make_image(tmp_path):
+    def make(name, size=(64, 32), color="red", exif_orientation=None) -> Path:
+        from PIL import Image
+
+        path = tmp_path / name
+        if path.suffix.lower() in (".heic", ".heif"):
+            from pillow_heif import register_heif_opener
+
+            register_heif_opener()
+        image = Image.new("RGB", size, color)
+        if exif_orientation:
+            exif = Image.Exif()
+            exif[0x0112] = exif_orientation  # the EXIF Orientation tag
+            image.save(path, exif=exif)
+        else:
+            image.save(path)
+        return path
+
+    return make

@@ -1,23 +1,28 @@
-"""Reading documents that are not plain text.
+"""Reading documents and pictures that are not plain text.
 
 extract_text turns PDF, Word, Excel and PowerPoint files - and on macOS the
 older formats textutil understands - into text for read_file, which numbers and
-pages it like any other file. Each format's library is imported only when that
-format is read, so a missing one fails just that format, with a message saying
-what to install.
+pages it like any other file. view_image hands a picture file to the vision
+model. Each format's library is imported only when that format is read, so a
+missing one fails just that format, with a message saying what to install.
 """
 from __future__ import annotations
 
 import functools
+import importlib.util
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from ..attachments import DOCUMENT_KINDS
+from ..attachments import DOCUMENT_KINDS, IMAGE_SUFFIXES
+from ..config import Config
+from ..llm import LLM
+from .registry import Registry, schema, string
 
 MAX_SHEET_ROWS = 5_000
+DEFAULT_QUESTION = "Describe this image in detail, including any text in it."
 
 
 class DocumentError(Exception):
@@ -188,3 +193,58 @@ _PACKAGES = {
     ".xlsm": "openpyxl",
     ".pptx": "python-pptx",
 }
+
+
+def open_image(path: Path):
+    """A picture file as an upright RGB image (phones store rotation in EXIF)."""
+    from PIL import Image, ImageOps
+
+    if path.suffix.lower() in (".heic", ".heif"):
+        try:
+            from pillow_heif import register_heif_opener
+        except ImportError as exc:
+            raise DocumentError("reading HEIC photos needs the pillow-heif package.") from exc
+        register_heif_opener()
+    with Image.open(path) as image:
+        image.seek(0)  # the first frame of an animation
+        return ImageOps.exif_transpose(image).convert("RGB")
+
+
+def register(registry: Registry, cfg: Config, llm: LLM) -> None:
+    if importlib.util.find_spec("PIL") is None:
+        return
+    from .screen import fit_for_vision
+
+    @registry.define(
+        "view_image",
+        description=(
+            "Look at a picture file - a photo, screenshot or scan - and answer a "
+            "question about it with a vision model. Use it for attached images and "
+            "any png, jpg, heic, webp, gif, tiff or bmp file. Ask something specific "
+            "when you can."
+        ),
+        parameters=schema(
+            {
+                "path": string("The image file."),
+                "question": string("What you want to know about it.", default=DEFAULT_QUESTION),
+            },
+            ["path"],
+        ),
+    )
+    def view_image(path: str, question: str = DEFAULT_QUESTION) -> str:
+        target = cfg.resolve_path(path)
+        if not target.is_file():
+            return f"ERROR: {target} does not exist."
+        if target.suffix.lower() not in IMAGE_SUFFIXES:
+            return (
+                f"ERROR: {target.name} is not a picture view_image can open. "
+                "Use read_file for documents."
+            )
+        try:
+            image = open_image(target)
+        except DocumentError as exc:
+            return f"ERROR: {exc}"
+        except Exception as exc:
+            return f"ERROR: could not open {target.name}: {exc}"
+        answer = llm.look(fit_for_vision(image), question)
+        return f"[image {image.width}x{image.height}, {target}]\n{answer}"

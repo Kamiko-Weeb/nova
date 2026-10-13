@@ -29,8 +29,12 @@ def _encode(image, quality: int = 72) -> bytes:
     return buffer.getvalue()
 
 
-def _shrink_to_limit(image, resample) -> bytes:
-    """Scale and recompress until the JPEG fits NIM's inline-image budget."""
+def fit_for_vision(image) -> bytes:
+    """JPEG bytes small enough for NIM's inline-image limit: scaled down to
+    MAX_WIDTH, then recompressed and shrunk until under MAX_JPEG_BYTES."""
+    from PIL import Image
+
+    resample = Image.LANCZOS
     if image.mode != "RGB":
         image = image.convert("RGB")
     if image.width > MAX_WIDTH:
@@ -94,7 +98,7 @@ def register(registry: Registry, cfg: Config, llm: LLM) -> None:
     def see_screen(question: str, monitor: int = 1) -> str:
         image = _grab(monitor)
         width, height = image.size
-        jpeg = _shrink_to_limit(image, Image.LANCZOS)
+        jpeg = fit_for_vision(image)
 
         try:
             shots_dir.mkdir(parents=True, exist_ok=True)

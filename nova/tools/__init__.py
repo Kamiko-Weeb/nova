@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from ..config import Config
 from ..llm import LLM
-from . import desktop, files, macui, pyexec, screen, shell, uia, web
+from . import desktop, documents, files, macui, pyexec, screen, shell, uia, web
 from .registry import Registry, Tool
 
 __all__ = ["Registry", "Tool", "build_registry"]
@@ -21,6 +21,7 @@ def build_registry(cfg: Config, llm: LLM, memory=None) -> Registry:
     files.register(registry, cfg)
     web.register(registry, cfg)
     screen.register(registry, cfg, llm)
+    documents.register(registry, cfg, llm)
     # Only one of these registers: uia on Windows, macui on macOS. They expose
     # the same tool names so the agent behaves identically on both.
     uia.register(registry, cfg)
