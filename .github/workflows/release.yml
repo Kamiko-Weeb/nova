@@ -60,6 +60,7 @@ jobs:
           --name Nova --icon nova.ico
           --hidden-import tkinter --hidden-import PIL._tkinter_finder
           --hidden-import sqlite3
+          --collect-all tkinterdnd2 --collect-all pillow_heif
           --collect-submodules nova --paths .
           packaging/nova_app.py
 
@@ -74,7 +75,7 @@ jobs:
 
   release:
     name: Publish release
-    needs: [build-mac, build-windows]
+    needs: [build-mac, build-windows, check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -99,12 +100,13 @@ jobs:
           generate_release_notes: true
 
   check:
-    name: Lint
+    name: Lint and test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: python -m pip install --upgrade pip pyflakes
-      - run: python -m pyflakes nova main.py packaging/nova_app.py
+      - run: python -m pip install --upgrade pip pyflakes pytest -r requirements.txt
+      - run: python -m pyflakes nova main.py packaging/nova_app.py tests
+      - run: python -m pytest -q

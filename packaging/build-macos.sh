@@ -52,6 +52,8 @@ python3 -m PyInstaller \
   --hidden-import tkinter \
   --hidden-import PIL._tkinter_finder \
   --hidden-import sqlite3 \
+  --collect-all tkinterdnd2 \
+  --collect-all pillow_heif \
   --collect-submodules nova \
   --paths "$ROOT" \
   --distpath "$DIST" \
