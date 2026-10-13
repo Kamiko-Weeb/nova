@@ -32,6 +32,9 @@ USEFUL_ROLES = {
 EDITABLE_ROLES = {"AXTextField", "AXTextArea", "AXComboBox"}
 TEXT_ROLES = {"AXStaticText", "AXTextField", "AXTextArea"}
 
+# How every window tool's `title` parameter is described to the model.
+WHERE = "The application name (e.g. 'Safari') or a window title, or part of either."
+
 # A window's UI tree is read one level at a time, one query per attribute:
 # `role of every UI element of every UI element of window 1` is a single Apple
 # event however wide that level is. Asking each element for each attribute in
@@ -104,6 +107,15 @@ class WindowError(Exception):
     """A window could not be read; the message is fit to hand to the model."""
 
 
+@dataclass
+class Target:
+    """An application process and one of its windows, the latter as an
+    AppleScript reference such as `window 1` or `window "Inbox"`."""
+
+    process: str
+    window: str = "window 1"
+
+
 def _escape(value: str) -> str:
     """Quote a Python string for embedding in an AppleScript literal."""
     return value.replace("\\", "\\\\").replace('"', '\\"')
@@ -167,9 +179,79 @@ def accessibility_denied() -> str | None:
 
 
 # ---------------------------------------------------------------- tree reading
-def _level(depth: int) -> str:
-    """AppleScript for every element `depth` levels below the front window."""
-    return "every UI element of " * depth + "window 1"
+def _windows() -> list[tuple[str, str | None, str]]:
+    """Every visible app's windows as (app, title, geometry).
+
+    The title is None for an app whose windows cannot be read.
+    """
+    script = _LEVEL_HELPERS + """
+tell application "System Events"
+    set output to {}
+    repeat with proc in (every process whose visible is true)
+        set procName to name of proc
+        try
+            repeat with win in (every window of proc)
+                set winName to name of win
+                if winName is missing value then set winName to ""
+                set {x, y} to position of win
+                set {w, h} to size of win
+                set end of output to my joined({procName, winName, ¬
+                    "[" & w & "x" & h & " at (" & x & ", " & y & ")]"}, character id 31)
+            end repeat
+        on error
+            set end of output to procName
+        end try
+    end repeat
+    return my joined(output, character id 30)
+end tell
+"""
+    ok, out = run_applescript(script)
+    if not ok:
+        raise WindowError(f"ERROR: {out}")
+    windows = []
+    for row in filter(None, out.split(_ITEM)):
+        process, _, rest = row.partition(_COLUMN)
+        title, _, geometry = rest.partition(_COLUMN)
+        windows.append((process, title if rest else None, geometry))
+    return windows
+
+
+def _target(title: str) -> Target:
+    """Find the window meant by `title`: an application name or a window title,
+    in full or in part, ignoring case. Models pass either, whatever the
+    parameter says."""
+    denied = accessibility_denied()
+    if denied:
+        raise WindowError(f"ERROR: {denied}")
+    wanted = title.strip()
+    ok, out = run_applescript(
+        f'tell application "System Events" to return exists process "{_escape(wanted)}"'
+    )
+    if ok and out == "true":
+        return Target(wanted)
+
+    needle = wanted.lower()
+    windows = _windows()
+    for process, _, _ in windows:
+        if process.lower() == needle:
+            return Target(process)
+    titled = [(process, name) for process, name, _ in windows if name]
+    for matches in (str.__eq__, str.__contains__):
+        for process, name in titled:
+            if matches(name.lower(), needle):
+                return Target(process, f'window "{_escape(name)}"')
+    for process, _, _ in windows:
+        if needle in process.lower():
+            return Target(process)
+    raise WindowError(
+        f"No application or window called '{title}'. Call list_windows to see "
+        "what is open."
+    )
+
+
+def _level(depth: int, window: str) -> str:
+    """AppleScript for every element `depth` levels below `window`."""
+    return "every UI element of " * depth + window
 
 
 def _clean(raw: str) -> str:
@@ -178,9 +260,9 @@ def _clean(raw: str) -> str:
     return "" if text == "missing value" else text
 
 
-def _read_level(app: str, depth: int, fields: tuple[str, ...]) -> list[Element]:
+def _read_level(target: Target, depth: int, fields: tuple[str, ...]) -> list[Element]:
     """Every element at one depth, with the requested attributes filled in."""
-    level = _level(depth)
+    level = _level(depth, target.window)
     queries = "".join(
         f"""
     try
@@ -191,8 +273,8 @@ def _read_level(app: str, depth: int, fields: tuple[str, ...]) -> list[Element]:
         for field in fields
     )
     script = _LEVEL_HELPERS + f"""
-tell application "System Events" to tell process "{_escape(app)}"
-    if not (exists window 1) then return "NOWINDOW"
+tell application "System Events" to tell process "{_escape(target.process)}"
+    if not (exists {target.window}) then return "NOWINDOW"
     set theRoles to my flat(role of {level}, {depth})
     if (count of theRoles) is 0 then return ""
     set theColumns to {{my joined(theRoles, character id 30)}}{queries}
@@ -203,7 +285,7 @@ end tell
     if not ok:
         raise WindowError(f"ERROR: {out}")
     if out == "NOWINDOW":
-        raise WindowError(f"'{app}' has no inspectable front window.")
+        raise WindowError(f"'{target.process}' has no inspectable front window.")
     if not out:
         return []
 
@@ -228,15 +310,12 @@ end tell
     return elements
 
 
-def _snapshot(app: str, *fields: str) -> list[Element]:
-    """Read the front window's UI tree breadth-first, shallowest elements first."""
-    denied = accessibility_denied()
-    if denied:
-        raise WindowError(f"ERROR: {denied}")
+def _snapshot(target: Target, *fields: str) -> list[Element]:
+    """Read a window's UI tree breadth-first, shallowest elements first."""
     elements: list[Element] = []
     for depth in range(1, MAX_DEPTH + 1):
         try:
-            level = _read_level(app, depth, fields)
+            level = _read_level(target, depth, fields)
         except WindowError:
             if depth == 1:
                 raise
@@ -273,16 +352,16 @@ def _best_match(
     return best
 
 
-def _act(app: str, element: Element, action: str) -> tuple[bool, str]:
+def _act(target: Target, element: Element, action: str) -> tuple[bool, str]:
     """Run `action` on theElement, after checking it is still the one we found.
 
     The window can change between reading it and acting on it; clicking whatever
     has moved into the same slot would be worse than failing.
     """
     script = _LEVEL_HELPERS + f"""
-tell application "System Events" to tell process "{_escape(app)}"
+tell application "System Events" to tell process "{_escape(target.process)}"
     set frontmost to true
-    set theElement to item {element.index} of my flat(get {_level(element.depth)}, {element.depth})
+    set theElement to item {element.index} of my flat(get {_level(element.depth, target.window)}, {element.depth})
     set theName to name of theElement
     if theName is missing value then set theName to ""
     set theDescription to description of theElement
@@ -342,47 +421,30 @@ def register(registry: Registry, cfg: Config) -> None:
         denied = accessibility_denied()
         if denied:
             return f"ERROR: {denied}"
-        script = """
-        tell application "System Events"
-            set output to ""
-            repeat with proc in (every process whose visible is true)
-                set procName to name of proc
-                try
-                    repeat with win in (every window of proc)
-                        set winPos to position of win
-                        set winSize to size of win
-                        set output to output & procName & " :: " & (name of win) ¬
-                            & " [" & (item 1 of winSize) & "x" & (item 2 of winSize) ¬
-                            & " at (" & (item 1 of winPos) & ", " ¬
-                            & (item 2 of winPos) & ")]" & linefeed
-                    end repeat
-                on error
-                    set output to output & procName & " :: (no inspectable windows)" & linefeed
-                end try
-            end repeat
-            return output
-        end tell
-        """
-        ok, out = run_applescript(script)
-        if not ok:
-            return f"ERROR: {out}"
-        return truncate(out or "No visible windows found.")
+        try:
+            windows = _windows()
+        except WindowError as exc:
+            return str(exc)
+        rows = [
+            f"{process} :: {name} {geometry}"
+            if name is not None
+            else f"{process} :: (no inspectable windows)"
+            for process, name, geometry in windows
+        ]
+        return truncate("\n".join(rows) or "No visible windows found.")
 
     @registry.define(
         "inspect_window",
         description=(
-            "List the interactive controls inside an application's front window: "
-            "buttons, text fields, checkboxes, menu items, with their names and "
-            "screen coordinates. Far more reliable than reading a screenshot. Use it "
-            "before clicking anything in a normal Mac application, then act with "
-            "click_control or set_control_text."
+            "List the interactive controls inside a window: buttons, text fields, "
+            "checkboxes, menu items, with their names and screen coordinates. Far "
+            "more reliable than reading a screenshot. Use it before clicking "
+            "anything in a normal Mac application, then act with click_control or "
+            "set_control_text."
         ),
         parameters=schema(
             {
-                "title": string(
-                    "The application name, e.g. 'Safari' or 'Notes'. Take it from "
-                    "the part before ' :: ' in list_windows output."
-                ),
+                "title": string(WHERE),
                 "max_items": integer(
                     "Cap on controls returned.", default=MAX_CONTROLS
                 ),
@@ -391,10 +453,9 @@ def register(registry: Registry, cfg: Config) -> None:
         ),
     )
     def inspect_window(title: str, max_items: int = MAX_CONTROLS) -> str:
-        app = title.strip()
         try:
             elements = _snapshot(
-                app, "name", "description", "role_description", "position", "size"
+                _target(title), "name", "description", "role_description", "position", "size"
             )
         except WindowError as exc:
             return str(exc)
@@ -427,15 +488,14 @@ def register(registry: Registry, cfg: Config) -> None:
     @registry.define(
         "read_window_text",
         description=(
-            "Read the visible text in an application's front window. Use it to check "
-            "an error message or confirm what a dialog says, without spending a "
-            "vision call."
+            "Read the visible text in a window. Use it to check an error message or "
+            "confirm what a dialog says, without spending a vision call."
         ),
-        parameters=schema({"title": string("The application name.")}, ["title"]),
+        parameters=schema({"title": string(WHERE)}, ["title"]),
     )
     def read_window_text(title: str) -> str:
         try:
-            elements = _snapshot(title.strip(), "value", "name")
+            elements = _snapshot(_target(title), "value", "name")
         except WindowError as exc:
             return str(exc)
 
@@ -452,20 +512,30 @@ def register(registry: Registry, cfg: Config) -> None:
     # ----------------------------------------------------------------- write
     @registry.define(
         "focus_window",
-        description="Bring an application to the front and give it keyboard focus.",
-        parameters=schema({"title": string("The application name.")}, ["title"]),
+        description=(
+            "Bring an application, or one particular window of it, to the front "
+            "and give it keyboard focus."
+        ),
+        parameters=schema({"title": string(WHERE)}, ["title"]),
         dangerous=True,
         preview=lambda a: f"Bring '{a.get('title')}' to the front",
     )
     def focus_window(title: str) -> str:
-        app = _escape(title.strip())
-        ok, out = run_applescript(f'tell application "{app}" to activate')
-        if not ok:
-            # Not every process is scriptable by name; fall back to System Events.
+        try:
+            target = _target(title)
+        except WindowError:
+            # Nothing open by that name: activating it by name launches it.
             ok, out = run_applescript(
-                f'tell application "System Events" to set frontmost of '
-                f'process "{app}" to true'
+                f'tell application "{_escape(title.strip())}" to activate'
             )
+        else:
+            ok, out = run_applescript(f"""
+tell application "System Events" to tell process "{_escape(target.process)}"
+    set frontmost to true
+    try
+        perform action "AXRaise" of {target.window}
+    end try
+end tell""")
         if not ok:
             return f"ERROR: could not focus '{title}': {out}"
         return f"Brought '{title}' to the front."
@@ -473,13 +543,13 @@ def register(registry: Registry, cfg: Config) -> None:
     @registry.define(
         "click_control",
         description=(
-            "Click a named control inside an application's front window - a button, "
-            "menu item, checkbox or link. Get the exact name from inspect_window "
-            "first. Precise, unlike clicking at coordinates."
+            "Click a named control inside a window - a button, menu item, checkbox "
+            "or link. Get the exact name from inspect_window first. Precise, unlike "
+            "clicking at coordinates."
         ),
         parameters=schema(
             {
-                "title": string("The application name."),
+                "title": string(WHERE),
                 "control": string("The control's name, as shown by inspect_window."),
                 "control_type": string(
                     "Optional accessibility role filter, e.g. 'AXButton'.", default=""
@@ -496,13 +566,13 @@ def register(registry: Registry, cfg: Config) -> None:
     def click_control(
         title: str, control: str, control_type: str = "", double: bool = False
     ) -> str:
-        app = title.strip()
         try:
-            elements = _snapshot(app, "name", "description", "role_description")
+            target = _target(title)
+            elements = _snapshot(target, "name", "description", "role_description")
         except WindowError as exc:
             return str(exc)
-        target = _best_match(elements, control, control_type)
-        if target is None:
+        found = _best_match(elements, control, control_type)
+        if found is None:
             return (
                 f"No control named '{control}' in '{title}'. Call inspect_window to "
                 "see the exact names."
@@ -511,10 +581,10 @@ def register(registry: Registry, cfg: Config) -> None:
         # relabels its button still reports success instead of tempting the
         # model to click again.
         clicks = "click theElement\n    click theElement" if double else "click theElement"
-        ok, out = _act(app, target, clicks)
+        ok, out = _act(target, found, clicks)
         if not ok:
             return f"ERROR: could not click '{control}': {out}"
-        return f"Clicked {target.label} in '{title}'."
+        return f"Clicked {found.label} in '{title}'."
 
     @registry.define(
         "set_control_text",
@@ -524,7 +594,7 @@ def register(registry: Registry, cfg: Config) -> None:
         ),
         parameters=schema(
             {
-                "title": string("The application name."),
+                "title": string(WHERE),
                 "control": string("The field's name, from inspect_window."),
                 "text": string("The text to put in it."),
             },
@@ -537,19 +607,19 @@ def register(registry: Registry, cfg: Config) -> None:
         ),
     )
     def set_control_text(title: str, control: str, text: str) -> str:
-        app = title.strip()
         try:
-            elements = _snapshot(app, "name", "description", "role_description")
+            target = _target(title)
+            elements = _snapshot(target, "name", "description", "role_description")
         except WindowError as exc:
             return str(exc)
         # A field and the label beside it often share a name; prefer the field.
-        target = _best_match(elements, control, prefer=EDITABLE_ROLES)
-        if target is None:
+        found = _best_match(elements, control, prefer=EDITABLE_ROLES)
+        if found is None:
             return (
                 f"No field named '{control}' in '{title}'. Call inspect_window to "
                 "see the exact names."
             )
-        ok, out = _act(app, target, f'set value of theElement to "{_escape(text)}"')
+        ok, out = _act(target, found, f'set value of theElement to "{_escape(text)}"')
         if not ok:
             return f"ERROR: could not set '{control}': {out}"
         return f"Set '{control}' to {text[:80]!r}."
