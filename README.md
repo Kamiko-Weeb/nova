@@ -182,7 +182,7 @@ Tools marked ⚠️ ask for your approval before running.
 
 **Shell** — `run_shell` ⚠️
 
-**Files** — `read_file` · `list_dir` · `find_files` · `search_in_files` ·
+**Files** — `read_file` (text, plus PDF, Word, Excel and PowerPoint) · `list_dir` · `find_files` · `search_in_files` ·
 `write_file` ⚠️ · `move_path` ⚠️ · `copy_path` ⚠️ · `delete_path` ⚠️
 (deletes go to the Recycle Bin by default)
 
@@ -192,7 +192,7 @@ Tools marked ⚠️ ask for your approval before running.
 `read_window_text` · `focus_window` ⚠️ · `click_control` ⚠️ ·
 `set_control_text` ⚠️
 
-**Screen** — `see_screen` · `save_screenshot`
+**Screen** — `see_screen` · `save_screenshot` · `view_image`
 
 **Mouse and keyboard** — `click` ⚠️ · `type_text` ⚠️ · `press_keys` ⚠️ ·
 `drag_mouse` ⚠️ · `move_mouse` · `scroll` · `screen_size` · `wait`
@@ -215,6 +215,20 @@ of web pages, where there is no control tree worth reading. There, Nova is told
 to look, act, then look again to confirm.
 
 ---
+
+## Attaching files
+
+In the window, add files to a message with the **Attach** button (⌘O, or
+Ctrl+O on Windows), by dragging them onto the window, or by pasting a
+screenshot with ⌘V (Ctrl+V). They show as chips above the message box, each
+tagged with its type; hover one to see its full path, click ✕ to drop it, or
+press Backspace in an empty message box to drop the last one. Nova gets the
+list of paths with your message and opens what it needs: `read_file` reads PDF,
+Word (`.docx`), Excel (`.xlsx`) and PowerPoint (`.pptx`) as well as plain text,
+and on macOS also `.doc`, `.rtf` and `.odt`; `view_image` shows pictures,
+iPhone HEIC photos included, to the vision model. Pasted screenshots are saved
+in `attachments/` (`~/.nova/attachments` for the installed app), which keeps
+the newest 50.
 
 ## Stopping it
 
