@@ -28,3 +28,4 @@ python-docx>=1.1
 openpyxl>=3.1
 python-pptx>=1.0
 pillow-heif>=0.18  # iPhone HEIC photos
+tkinterdnd2>=0.4  # drag and drop onto the window

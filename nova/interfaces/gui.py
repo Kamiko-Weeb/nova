@@ -28,6 +28,7 @@ from ..attachments import (
     badge,
     compose_message,
     describe,
+    save_pasted_image,
     summary_line,
 )
 from ..config import Config
@@ -43,6 +44,9 @@ AMBER = "#ffcc66"
 RED = "#ff7a7a"
 
 PERMISSION_CHECK_MS = 2000
+# macOS draws a tk.Button with its own light face whatever bg says, so button
+# text has to be dark there; Windows honours the dark panel colour.
+BUTTON_TEXT = "#0b1220" if sys.platform == "darwin" else FG
 
 # Attachment chips. The border gives each chip a visible edge: the fill alone
 # is 1.12:1 against the panel, this border 3.2:1.
@@ -56,6 +60,19 @@ ATTACH_HINT = (
     f"Attach files ({KEYS}O). You can also drag them onto the window, "
     f"or paste a screenshot with {KEYS}V."
 )
+# A drag passing from one part of the window to another reports leaving the
+# first just before entering the second; waiting this long avoids a flicker.
+DRAG_LEAVE_MS = 80
+
+
+def _make_root() -> tuple[tk.Tk, bool]:
+    """The window's root, able to take dropped files when tkinterdnd2 loads."""
+    try:
+        from tkinterdnd2 import TkinterDnD
+
+        return TkinterDnD.Tk(), True
+    except Exception:  # not installed, or its Tk extension would not load
+        return tk.Tk(), False
 
 
 def _font(size: int, *, bold: bool = False, mono: bool = False) -> tkfont.Font:
@@ -86,6 +103,7 @@ class NovaWindow:
         self.busy = False
         self.streaming = False
         self.pending_approval: ApprovalRequest | None = None
+        self._drag_leave_job: str | None = None
 
         self.attachments: list[Path] = []
 
@@ -106,7 +124,7 @@ class NovaWindow:
 
     # --------------------------------------------------------------- widgets
     def _build_window(self) -> None:
-        self.root = tk.Tk()
+        self.root, self.can_drop = _make_root()
         self.root.title("Nova")
         self.root.geometry("960x720")
         self.root.minsize(640, 440)
@@ -175,6 +193,7 @@ class NovaWindow:
         self.entry.bind("<Shift-Return>", lambda _e: None)
         self.entry.bind("<Escape>", lambda _e: self._stop())
         self.entry.bind("<BackSpace>", self._on_backspace)
+        self.entry.bind(f"<{MOD}-v>", self._paste)
         # The keyboard way to attach. Bound on the message box too, because its
         # own Ctrl+O binding (open a new line) would otherwise run first.
         for widget in (self.entry, self.root):
@@ -186,7 +205,7 @@ class NovaWindow:
         buttons = tk.Frame(footer, bg=PANEL)
         buttons.pack(side="right", padx=(0, 12), pady=10)
         self.attach_button = tk.Button(
-            buttons, text="Attach", command=self._choose_files, bg=PANEL, fg=FG,
+            buttons, text="Attach", command=self._choose_files, bg=PANEL, fg=BUTTON_TEXT,
             activebackground=PANEL, relief="flat", borderwidth=0, width=7,
             cursor="hand2", font=bold,
         )
@@ -218,6 +237,19 @@ class NovaWindow:
             status, text="", bg=PANEL, fg=MUTED, anchor="e", font=small, padx=14
         )
         self.usage_label.pack(side="right")
+
+        # The message box's own focus ring, restored after a drag recolours it.
+        self._entry_ring = (
+            self.entry.cget("highlightbackground"), self.entry.cget("highlightcolor")
+        )
+        if self.can_drop:
+            from tkinterdnd2 import DND_FILES
+
+            for widget in (self.root, self.transcript, self.entry):
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<DropEnter>>", self._on_drag_enter)
+                widget.dnd_bind("<<DropLeave>>", self._on_drag_leave)
+                widget.dnd_bind("<<Drop>>", self._on_drop)
 
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -355,6 +387,61 @@ class NovaWindow:
 
     def _restore_status(self) -> None:
         self.status.configure(text="Working..." if self.busy else "Ready")
+
+    def _paste(self, _event: tk.Event | None = None) -> str | None:
+        """Attach a pasted image (or, on Windows, copied files). Anything else
+        falls through to the normal text paste."""
+        try:
+            from PIL import ImageGrab
+
+            grabbed = ImageGrab.grabclipboard()
+        except Exception:
+            return None
+        if grabbed is None:
+            return None
+        if isinstance(grabbed, list):  # file paths, which Windows provides
+            self._add_attachments(grabbed)
+        else:
+            pasted = save_pasted_image(grabbed)
+            self._add_attachments([pasted])
+            if pasted.resolve() in self.attachments:  # not left out over the limit
+                self.status.configure(text="Attached the pasted screenshot")
+        return "break"
+
+    def _on_drag_enter(self, event: Any) -> str:
+        if self._drag_leave_job is not None:  # still over the window
+            self.root.after_cancel(self._drag_leave_job)
+            self._drag_leave_job = None
+        self._show_drop_target(True)
+        return event.action
+
+    def _on_drag_leave(self, event: Any) -> str:
+        if self._drag_leave_job is not None:
+            self.root.after_cancel(self._drag_leave_job)
+        self._drag_leave_job = self.root.after(
+            DRAG_LEAVE_MS, lambda: self._show_drop_target(False)
+        )
+        return event.action
+
+    def _on_drop(self, event: Any) -> str:
+        if self._drag_leave_job is not None:
+            self.root.after_cancel(self._drag_leave_job)
+        self._show_drop_target(False)
+        # Tk hands over one string; paths with spaces come wrapped in braces.
+        self._add_attachments(self.root.tk.splitlist(event.data))
+        return event.action
+
+    def _show_drop_target(self, active: bool) -> None:
+        """While files are dragged over the window, tint the conversation and
+        outline the message box, so it is obvious they can be dropped."""
+        self._drag_leave_job = None
+        self.transcript.configure(bg=FIELD if active else BG)
+        ring = (ACCENT, ACCENT) if active else self._entry_ring
+        self.entry.configure(highlightbackground=ring[0], highlightcolor=ring[1])
+        if active:
+            self.status.configure(text="Drop to attach")
+        else:
+            self._restore_status()
 
     # ------------------------------------------------------------- transcript
     def _write(self, text: str, tag: str = "text") -> None:

@@ -6,7 +6,10 @@ they overwrite - so they only run when asked:
     NOVA_GUI_TESTS=1 .venv/bin/python -m pytest tests/test_gui_attachments.py -q
 """
 import os
+import subprocess
 import sys
+import time
+import types
 
 import pytest
 
@@ -171,3 +174,132 @@ def test_backspace_in_an_empty_box_removes_the_last_attachment(window, tmp_path)
     window.entry.insert("1.0", "typing")
     assert window._on_backspace() is None  # normal Backspace while there is text
     assert window.attachments == [a]
+
+
+# --- paste and drag and drop -------------------------------------------------
+def put_image_on_clipboard(path):
+    subprocess.run(
+        ["osascript", "-e", f'set the clipboard to (read (POSIX file "{path}") as «class PNGf»)'],
+        check=True,
+    )
+
+
+def put_text_on_clipboard(text):
+    subprocess.run(["pbcopy"], input=text.encode(), check=True)
+
+
+def test_paste_an_image(window, tmp_path):
+    from PIL import Image
+
+    png = tmp_path / "shot.png"
+    Image.new("RGB", (20, 10), "green").save(png)
+    put_image_on_clipboard(png)
+    assert window._paste() == "break"
+    (pasted,) = window.attachments
+    assert pasted.parent == (tmp_path / "attachments").resolve()
+    assert pasted.name.startswith("paste-")
+    assert Image.open(pasted).size == (20, 10)
+    assert window.status.cget("text") == "Attached the pasted screenshot"
+
+
+def test_paste_text_is_left_alone(window):
+    put_text_on_clipboard("just words")
+    assert window._paste() is None
+    assert window.attachments == []
+
+
+def test_command_v_is_bound(window):
+    assert window.entry.bind("<Command-v>")
+
+
+def test_drop_files_with_spaces_and_accents(window, tmp_path):
+    folder = tmp_path / "My Files"
+    folder.mkdir()
+    doc = folder / "résumé final.pdf"
+    doc.write_bytes(b"x")
+    png = tmp_path / "b.png"
+    png.write_bytes(b"x")
+    event = types.SimpleNamespace(data=f"{{{doc}}} {png} https://example.com", action="copy")
+    assert window._on_drop(event) == "copy"
+    assert window.attachments == [doc.resolve(), png.resolve()]
+    assert window.status.cget("text") == "Attached 2 files"
+
+
+def test_window_accepts_drops(window):
+    assert window.can_drop, "tkinterdnd2 should be installed and load"
+
+
+def drag_feedback_on(win):
+    from nova.interfaces.gui import ACCENT, FIELD
+
+    return (
+        win.status.cget("text") == "Drop to attach"
+        and win.transcript.cget("bg") == FIELD
+        and win.entry.cget("highlightbackground") == ACCENT
+    )
+
+
+def settle(win, seconds=0.2):
+    """Let pending after() callbacks - the delayed drag-leave - run."""
+    end = time.time() + seconds
+    while time.time() < end:
+        win.root.update()
+        time.sleep(0.01)
+
+
+def test_dragging_over_the_window_highlights_it(window):
+    from nova.interfaces.gui import BG
+
+    ring = window.entry.cget("highlightbackground")
+    event = types.SimpleNamespace(action="copy")
+    window._on_drag_enter(event)
+    assert drag_feedback_on(window)
+    window._on_drag_leave(event)
+    settle(window)
+    assert window.status.cget("text") == "Ready"
+    assert window.transcript.cget("bg") == BG
+    assert window.entry.cget("highlightbackground") == ring  # the original ring is back
+
+
+def test_moving_between_parts_of_the_window_does_not_flicker(window):
+    event = types.SimpleNamespace(action="copy")
+    window._on_drag_enter(event)
+    window._on_drag_leave(event)  # left the conversation...
+    window._on_drag_enter(event)  # ...straight into the message box
+    settle(window)
+    assert drag_feedback_on(window)
+
+
+def test_dropping_ends_the_highlight(window, tmp_path):
+    from nova.interfaces.gui import BG
+
+    (doc,) = make_files(tmp_path, "doc.txt")
+    window._on_drag_enter(types.SimpleNamespace(action="copy"))
+    window._on_drop(types.SimpleNamespace(data=str(doc), action="copy"))
+    assert window.transcript.cget("bg") == BG
+    assert window.status.cget("text") == "Attached doc.txt"
+
+
+def test_two_leaves_in_a_row_still_cancel_cleanly(window):
+    event = types.SimpleNamespace(action="copy")
+    window._on_drag_enter(event)
+    window._on_drag_leave(event)
+    window._on_drag_leave(event)  # a second leave must not strand the first reset
+    window._on_drag_enter(event)
+    settle(window)
+    assert drag_feedback_on(window)
+
+
+def _contrast(a, b):
+    def lum(h):
+        r, g, bl = (int(h.lstrip("#")[i : i + 2], 16) / 255 for i in (0, 2, 4))
+        f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4  # noqa: E731
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(bl)
+
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_attach_label_is_readable_on_macos_buttons(window):
+    # macOS ignores a tk.Button's bg and draws a white face in an active window.
+    assert _contrast(window.attach_button.cget("fg"), "#ffffff") >= 4.5
