@@ -7,10 +7,13 @@ from vision as estimates and verify with another screenshot after acting.
 """
 from __future__ import annotations
 
+import sys
 import time
 
 from ..config import Config
 from .registry import Registry, integer, schema, string
+
+KEY_INTERVAL = 0.012  # seconds between typed characters
 
 
 def register(registry: Registry, cfg: Config) -> None:
@@ -113,8 +116,32 @@ def register(registry: Registry, cfg: Config) -> None:
         preview=lambda a: f"Type: {a.get('text', '')[:200]}",
     )
     def type_text(text: str) -> str:
-        pyautogui.typewrite(text, interval=0.012)
+        if sys.platform == "darwin":
+            _type_unicode(text)
+        else:
+            pyautogui.typewrite(text, interval=KEY_INTERVAL)
         return f"Typed {len(text)} characters."
+
+    def _type_unicode(text: str) -> None:
+        """Type any character on macOS, not only those with a US key code.
+
+        pyautogui.typewrite silently skips the rest - accents, curly quotes,
+        dashes, emoji - so "it’s" came out as "its". Each character is posted as
+        a key event carrying the text itself. Enter and Tab stay real key presses
+        so they still act as keys.
+        """
+        import Quartz
+
+        for char in text:
+            if char in "\r\n\t":
+                pyautogui.press("tab" if char == "\t" else "enter")
+            else:
+                units = len(char.encode("utf-16-le")) // 2  # emoji take two
+                for down in (True, False):
+                    event = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
+                    Quartz.CGEventKeyboardSetUnicodeString(event, units, char)
+                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            time.sleep(KEY_INTERVAL)
 
     @registry.define(
         "press_keys",
