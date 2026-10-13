@@ -13,56 +13,15 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import dataclass
 
 from ..config import Config
 from .registry import Registry, boolean, integer, schema, string, truncate
 
 SCRIPT_TIMEOUT = 30
 MAX_CONTROLS = 120
-WALK_LIMIT = 2000  # most elements visited when walking a window's UI tree
-
-# AppleScript handlers prepended to scripts that look inside a window.
-#
-# descendantsOf: `entire contents` returns nothing on recent macOS (seen on 27),
-# so walk the tree breadth-first through `UI elements` instead.
-#
-# labelOf: a missing name comes back as `missing value`, which coerces to the
-# text "missing value" rather than "". Icon-only controls - most toolbar
-# buttons, many text fields - carry their label in the description instead.
-AX_HELPERS = """
-on labelOf(theElement)
-    tell application "System Events"
-        try
-            set theName to name of theElement
-            if theName is not missing value and theName is not "" then return theName as text
-        end try
-        try
-            set theDescription to description of theElement
-            if theDescription is not missing value then return theDescription as text
-        end try
-    end tell
-    return ""
-end labelOf
-
-on descendantsOf(theRoot, maxCount)
-    tell application "System Events"
-        set found to {}
-        set pending to {theRoot}
-        set i to 1
-        repeat while i <= (count of pending) and (count of found) < maxCount
-            set node to item i of pending
-            set i to i + 1
-            try
-                repeat with kid in (UI elements of node)
-                    set end of found to contents of kid
-                    set end of pending to contents of kid
-                end repeat
-            end try
-        end repeat
-        return found
-    end tell
-end descendantsOf
-"""
+MAX_DEPTH = 15  # levels below the window that are read
+MAX_ELEMENTS = 5000  # stop descending once this many elements have been read
 
 # Accessibility roles worth reporting: things a person could click or read.
 USEFUL_ROLES = {
@@ -71,6 +30,78 @@ USEFUL_ROLES = {
     "AXLink", "AXPopUpButton", "AXTabGroup", "AXRow", "AXCell", "AXImage",
 }
 EDITABLE_ROLES = {"AXTextField", "AXTextArea", "AXComboBox"}
+TEXT_ROLES = {"AXStaticText", "AXTextField", "AXTextArea"}
+
+# A window's UI tree is read one level at a time, one query per attribute:
+# `role of every UI element of every UI element of window 1` is a single Apple
+# event however wide that level is. Asking each element for each attribute in
+# turn costs six events per control and timed out on a 300-row table, and
+# `entire contents`, the obvious shortcut, returns nothing on macOS 27.
+#
+# Values come back as text, joined with control characters that never appear in
+# UI text: _ITEM between elements, _COLUMN between attributes.
+_ITEM = "\x1e"
+_COLUMN = "\x1f"
+_LEVEL_HELPERS = """
+on flat(theList, levels)
+    if levels is 1 then return theList
+    set out to {}
+    repeat with x in theList
+        set out to out & my flat(contents of x, levels - 1)
+    end repeat
+    return out
+end flat
+
+on joined(theList, separator)
+    set AppleScript's text item delimiters to separator
+    set theText to theList as text
+    set AppleScript's text item delimiters to ""
+    return theText
+end joined
+"""
+# Element attribute -> AppleScript property.
+_PROPERTIES = {
+    "name": "name",
+    "description": "description",
+    "role_description": "role description",
+    "position": "position",
+    "size": "size",
+    "value": "value",
+}
+_PAIRS = {"position", "size"}  # come back as {x, y}, so two items per element
+
+
+@dataclass
+class Element:
+    """One node of a window's UI tree, found at `index` within its level."""
+
+    depth: int
+    index: int
+    role: str = ""
+    name: str = ""
+    description: str = ""
+    role_description: str = ""
+    position: tuple[int, int] | None = None
+    size: tuple[int, int] | None = None
+    value: str = ""
+
+    @property
+    def label(self) -> str:
+        """The name, else a description that says more than the role does.
+
+        Icon-only controls - most toolbar buttons, many text fields - carry their
+        label in the description. Otherwise the description is just the role
+        spelled out ("button"), which is noise.
+        """
+        if self.name:
+            return self.name
+        if self.description != self.role_description:
+            return self.description
+        return ""
+
+
+class WindowError(Exception):
+    """A window could not be read; the message is fit to hand to the model."""
 
 
 def _escape(value: str) -> str:
@@ -119,8 +150,8 @@ def accessibility_denied() -> str | None:
 
     The probe reads another app's menu bar, which only the Accessibility API can
     answer. Asking System Events for a process name succeeds without the
-    permission, so it proves nothing - and the window tools below swallow the
-    resulting errors, reporting "no windows" instead of "permission missing".
+    permission, so it proves nothing - and reading a window without it reports
+    "no windows" instead of "permission missing".
     """
     global _accessibility_confirmed
     if _accessibility_confirmed:
@@ -133,6 +164,139 @@ def accessibility_denied() -> str | None:
         _accessibility_confirmed = True
         return None
     return out
+
+
+# ---------------------------------------------------------------- tree reading
+def _level(depth: int) -> str:
+    """AppleScript for every element `depth` levels below the front window."""
+    return "every UI element of " * depth + "window 1"
+
+
+def _clean(raw: str) -> str:
+    # A missing attribute coerces to the text "missing value", not "".
+    text = raw.strip()
+    return "" if text == "missing value" else text
+
+
+def _read_level(app: str, depth: int, fields: tuple[str, ...]) -> list[Element]:
+    """Every element at one depth, with the requested attributes filled in."""
+    level = _level(depth)
+    queries = "".join(
+        f"""
+    try
+        set end of theColumns to my joined(my flat({_PROPERTIES[field]} of {level}, {depth}), character id 30)
+    on error
+        set end of theColumns to ""
+    end try"""
+        for field in fields
+    )
+    script = _LEVEL_HELPERS + f"""
+tell application "System Events" to tell process "{_escape(app)}"
+    if not (exists window 1) then return "NOWINDOW"
+    set theRoles to my flat(role of {level}, {depth})
+    if (count of theRoles) is 0 then return ""
+    set theColumns to {{my joined(theRoles, character id 30)}}{queries}
+    return my joined(theColumns, character id 31)
+end tell
+"""
+    ok, out = run_applescript(script)
+    if not ok:
+        raise WindowError(f"ERROR: {out}")
+    if out == "NOWINDOW":
+        raise WindowError(f"'{app}' has no inspectable front window.")
+    if not out:
+        return []
+
+    columns = out.split(_COLUMN)
+    elements = [
+        Element(depth, index, role=_clean(role))
+        for index, role in enumerate(columns[0].split(_ITEM), start=1)
+    ]
+    for field, column in zip(fields, columns[1:]):
+        values = column.split(_ITEM)
+        if field in _PAIRS:
+            if len(values) != 2 * len(elements):
+                continue  # the query failed, or an element had no such pair
+            for element, x, y in zip(elements, values[::2], values[1::2]):
+                try:
+                    setattr(element, field, (int(float(x)), int(float(y))))
+                except ValueError:
+                    pass
+        elif len(values) == len(elements):
+            for element, value in zip(elements, values):
+                setattr(element, field, _clean(value))
+    return elements
+
+
+def _snapshot(app: str, *fields: str) -> list[Element]:
+    """Read the front window's UI tree breadth-first, shallowest elements first."""
+    denied = accessibility_denied()
+    if denied:
+        raise WindowError(f"ERROR: {denied}")
+    elements: list[Element] = []
+    for depth in range(1, MAX_DEPTH + 1):
+        try:
+            level = _read_level(app, depth, fields)
+        except WindowError:
+            if depth == 1:
+                raise
+            break  # a level the app will not describe ends the walk
+        if not level:
+            break
+        elements.extend(level)
+        if len(elements) >= MAX_ELEMENTS:
+            break
+    return elements
+
+
+def _best_match(
+    elements: list[Element], wanted: str, role: str = "", prefer: set[str] = frozenset()
+) -> Element | None:
+    """An exact label match beats a partial one; then `prefer` roles; then the
+    shallowest. Case-insensitive, as AppleScript's own comparisons are."""
+    needle = wanted.strip().lower()
+    role = role.strip().lower()
+    best, best_key = None, None
+    for element in elements:
+        if role and element.role.lower() != role:
+            continue
+        label = element.label.lower()
+        if label == needle:
+            score = 2
+        elif needle and needle in label:
+            score = 1
+        else:
+            continue
+        key = (score, element.role in prefer)
+        if best_key is None or key > best_key:  # strict: the shallowest wins ties
+            best, best_key = element, key
+    return best
+
+
+def _act(app: str, element: Element, action: str) -> tuple[bool, str]:
+    """Run `action` on theElement, after checking it is still the one we found.
+
+    The window can change between reading it and acting on it; clicking whatever
+    has moved into the same slot would be worse than failing.
+    """
+    script = _LEVEL_HELPERS + f"""
+tell application "System Events" to tell process "{_escape(app)}"
+    set frontmost to true
+    set theElement to item {element.index} of my flat(get {_level(element.depth)}, {element.depth})
+    set theName to name of theElement
+    if theName is missing value then set theName to ""
+    set theDescription to description of theElement
+    if theDescription is missing value then set theDescription to ""
+    if role of theElement is not "{_escape(element.role)}" or theName is not "{_escape(element.name)}" ¬
+        or theDescription is not "{_escape(element.description)}" then return "CHANGED"
+    {action}
+    return "DONE"
+end tell
+"""
+    ok, out = run_applescript(script)
+    if ok and out == "CHANGED":
+        return False, "the window changed before the action ran. Inspect it again."
+    return ok, out
 
 
 def register(registry: Registry, cfg: Config) -> None:
@@ -227,64 +391,30 @@ def register(registry: Registry, cfg: Config) -> None:
         ),
     )
     def inspect_window(title: str, max_items: int = MAX_CONTROLS) -> str:
-        denied = accessibility_denied()
-        if denied:
-            return f"ERROR: {denied}"
-        app = _escape(title.strip())
-        script = AX_HELPERS + f"""
-        tell application "System Events"
-            tell process "{app}"
-                set output to ""
-                try
-                    set theWindow to window 1
-                on error
-                    return "NOWINDOW"
-                end try
-                repeat with element in my descendantsOf(theWindow, {WALK_LIMIT})
-                    try
-                        set elementRole to role of element
-                        set elementName to my labelOf(element)
-                        set elementPos to position of element
-                        set elementSize to size of element
-                        set output to output & elementRole & "|" & elementName ¬
-                            & "|" & (item 1 of elementPos) & "," & (item 2 of elementPos) ¬
-                            & "|" & (item 1 of elementSize) & "," & (item 2 of elementSize) ¬
-                            & linefeed
-                    end try
-                end repeat
-                return output
-            end tell
-        end tell
-        """
-        ok, out = run_applescript(script, timeout=45)
-        if not ok:
-            return f"ERROR: {out}"
-        if out == "NOWINDOW":
-            return f"'{title}' has no inspectable front window."
+        app = title.strip()
+        try:
+            elements = _snapshot(
+                app, "name", "description", "role_description", "position", "size"
+            )
+        except WindowError as exc:
+            return str(exc)
 
+        limit = max(1, min(MAX_CONTROLS, max_items))
         rows: list[str] = []
-        for line in out.splitlines():
-            parts = line.split("|")
-            if len(parts) != 4:
+        for element in elements:
+            if element.role not in USEFUL_ROLES or not element.position:
                 continue
-            role, name, position, size = parts
-            if role not in USEFUL_ROLES:
+            if not element.label and element.role not in EDITABLE_ROLES:
                 continue
-            if not name.strip() and role not in EDITABLE_ROLES:
-                continue
-            try:
-                left, top = (int(float(v)) for v in position.split(","))
-                width, height = (int(float(v)) for v in size.split(","))
-            except ValueError:
-                continue
+            (left, top), (width, height) = element.position, element.size or (0, 0)
             if width <= 0 or height <= 0:
                 continue
-            centre = f"({left + width // 2}, {top + height // 2})"
-            label = (name.strip() or "(no label)")[:70]
-            rows.append(f"{len(rows) + 1:>3}. {role:<14} {label:<70} at {centre}")
-            if len(rows) >= max(1, min(MAX_CONTROLS, max_items)):
-                rows.append(f"... stopped at {len(rows) - 1} controls")
+            if len(rows) == limit:
+                rows.append(f"... stopped at {limit} controls")
                 break
+            centre = f"({left + width // 2}, {top + height // 2})"
+            label = (element.label or "(no label)")[:70]
+            rows.append(f"{len(rows) + 1:>3}. {element.role:<14} {label:<70} at {centre}")
 
         if not rows:
             return (
@@ -304,54 +434,17 @@ def register(registry: Registry, cfg: Config) -> None:
         parameters=schema({"title": string("The application name.")}, ["title"]),
     )
     def read_window_text(title: str) -> str:
-        denied = accessibility_denied()
-        if denied:
-            return f"ERROR: {denied}"
-        app = _escape(title.strip())
-        script = AX_HELPERS + f"""
-        tell application "System Events"
-            tell process "{app}"
-                set output to ""
-                try
-                    set theWindow to window 1
-                on error
-                    return "NOWINDOW"
-                end try
-                repeat with element in my descendantsOf(theWindow, {WALK_LIMIT})
-                    try
-                        if role of element is in {{"AXStaticText", "AXTextField", "AXTextArea"}} then
-                            set elementValue to ""
-                            try
-                                set rawValue to value of element
-                                if rawValue is not missing value then set elementValue to rawValue as text
-                            end try
-                            if elementValue is "" then
-                                try
-                                    set rawName to name of element
-                                    if rawName is not missing value then set elementValue to rawName as text
-                                end try
-                            end if
-                            if elementValue is not "" then
-                                set output to output & elementValue & linefeed
-                            end if
-                        end if
-                    end try
-                end repeat
-                return output
-            end tell
-        end tell
-        """
-        ok, out = run_applescript(script, timeout=45)
-        if not ok:
-            return f"ERROR: {out}"
-        if out == "NOWINDOW":
-            return f"'{title}' has no inspectable front window."
+        try:
+            elements = _snapshot(title.strip(), "value", "name")
+        except WindowError as exc:
+            return str(exc)
 
-        seen: list[str] = []
-        for line in out.splitlines():
-            text = line.strip()
-            if text and text not in seen:
-                seen.append(text)
+        seen: dict[str, None] = {}  # ordered, de-duplicated
+        for element in elements:
+            if element.role in TEXT_ROLES:
+                text = element.value or element.name
+                if text:
+                    seen[text] = None
         if not seen:
             return f"No readable text found in '{title}'."
         return truncate(f"Text in '{title}':\n" + "\n".join(seen))
@@ -403,51 +496,25 @@ def register(registry: Registry, cfg: Config) -> None:
     def click_control(
         title: str, control: str, control_type: str = "", double: bool = False
     ) -> str:
-        app = _escape(title.strip())
-        target = _escape(control.strip())
-        role_test = (
-            f' and role is "{_escape(control_type.strip())}"'
-            if control_type.strip()
-            else ""
-        )
-        # Exact name first, then a contains-match, so partial names still work.
-        # The name is read before clicking: a click that closes a dialog or
-        # relabels the button would otherwise turn a success into an error, and
-        # the model would click again.
-        script = AX_HELPERS + f"""
-        tell application "System Events"
-            tell process "{app}"
-                set frontmost to true
-                set theWindow to window 1
-                set matches to (every UI element of theWindow whose name is "{target}"{role_test})
-                if (count of matches) is 0 then
-                    set matches to {{}}
-                    repeat with element in my descendantsOf(theWindow, {WALK_LIMIT})
-                        try
-                            if my labelOf(element) contains "{target}" then
-                                set end of matches to contents of element
-                            end if
-                        end try
-                    end repeat
-                end if
-                if (count of matches) is 0 then return "NOTFOUND"
-                set theControl to item 1 of matches
-                set controlName to name of theControl as text
-                click theControl
-                {"click theControl" if double else ""}
-                return "CLICKED " & controlName
-            end tell
-        end tell
-        """
-        ok, out = run_applescript(script)
-        if not ok:
-            return f"ERROR: could not click '{control}': {out}"
-        if out == "NOTFOUND":
+        app = title.strip()
+        try:
+            elements = _snapshot(app, "name", "description", "role_description")
+        except WindowError as exc:
+            return str(exc)
+        target = _best_match(elements, control, control_type)
+        if target is None:
             return (
                 f"No control named '{control}' in '{title}'. Call inspect_window to "
                 "see the exact names."
             )
-        return out.replace("CLICKED", "Clicked", 1) + f" in '{title}'."
+        # The label was read before clicking, so a click that closes a dialog or
+        # relabels its button still reports success instead of tempting the
+        # model to click again.
+        clicks = "click theElement\n    click theElement" if double else "click theElement"
+        ok, out = _act(app, target, clicks)
+        if not ok:
+            return f"ERROR: could not click '{control}': {out}"
+        return f"Clicked {target.label} in '{title}'."
 
     @registry.define(
         "set_control_text",
@@ -470,39 +537,21 @@ def register(registry: Registry, cfg: Config) -> None:
         ),
     )
     def set_control_text(title: str, control: str, text: str) -> str:
-        app = _escape(title.strip())
-        target = _escape(control.strip())
-        value = _escape(text)
-        script = AX_HELPERS + f"""
-        tell application "System Events"
-            tell process "{app}"
-                set frontmost to true
-                set theWindow to window 1
-                set matches to (every UI element of theWindow whose name is "{target}")
-                if (count of matches) is 0 then
-                    set matches to {{}}
-                    repeat with element in my descendantsOf(theWindow, {WALK_LIMIT})
-                        try
-                            if my labelOf(element) contains "{target}" then
-                                set end of matches to contents of element
-                            end if
-                        end try
-                    end repeat
-                end if
-                if (count of matches) is 0 then return "NOTFOUND"
-                set value of (item 1 of matches) to "{value}"
-                return "SET"
-            end tell
-        end tell
-        """
-        ok, out = run_applescript(script)
-        if not ok:
-            return f"ERROR: could not set '{control}': {out}"
-        if out == "NOTFOUND":
+        app = title.strip()
+        try:
+            elements = _snapshot(app, "name", "description", "role_description")
+        except WindowError as exc:
+            return str(exc)
+        # A field and the label beside it often share a name; prefer the field.
+        target = _best_match(elements, control, prefer=EDITABLE_ROLES)
+        if target is None:
             return (
                 f"No field named '{control}' in '{title}'. Call inspect_window to "
                 "see the exact names."
             )
+        ok, out = _act(app, target, f'set value of theElement to "{_escape(text)}"')
+        if not ok:
+            return f"ERROR: could not set '{control}': {out}"
         return f"Set '{control}' to {text[:80]!r}."
 
     @registry.define(
