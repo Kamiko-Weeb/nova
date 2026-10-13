@@ -121,7 +121,7 @@ class Config:
                 "NOVA_MODEL", "nvidia/nemotron-3-super-120b-a12b"
             ).strip(),
             vision_model=os.environ.get(
-                "NOVA_VISION_MODEL", "meta/llama-3.2-90b-vision-instruct"
+                "NOVA_VISION_MODEL", "meta/llama-3.2-11b-vision-instruct"
             ).strip(),
             temperature=_dec("NOVA_TEMPERATURE", 0.2),
             max_tokens=_num("NOVA_MAX_TOKENS", 2048),

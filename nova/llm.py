@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from openai import APIStatusError, OpenAI
+from openai import APIError, APIStatusError, APITimeoutError, OpenAI
 
 from .config import Config
 
@@ -150,7 +150,11 @@ class LLM:
     def __init__(self, cfg: Config) -> None:
         cfg.require_api_key()
         self.cfg = cfg
-        self.client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key, timeout=180.0)
+        # max_retries=0: _post does its own retrying with backoff. Left at the
+        # SDK's default of 2, every timeout silently became three.
+        self.client = OpenAI(
+            base_url=cfg.base_url, api_key=cfg.api_key, timeout=180.0, max_retries=0
+        )
         self.limiter = RateLimiter(cfg.requests_per_minute)
         self.usage = Usage()
         self.usage_log = UsageLog(cfg.usage_path)
@@ -179,7 +183,16 @@ class LLM:
                     raise LLMError(self._explain(exc, str(kwargs.get("model", "?")))) from exc
                 time.sleep(max(self._retry_after(exc), delay))
                 delay *= 2
-            except Exception as exc:  # network blips, timeouts
+            except APITimeoutError as exc:
+                # A timeout means the model is overloaded. Retrying multiplies the
+                # wait - five attempts at 180s each is a quarter of an hour of
+                # silence - instead of fixing anything.
+                raise LLMError(
+                    f"{kwargs.get('model', 'The model')} did not answer in time "
+                    "and may be overloaded on NIM. Try again, or pick another "
+                    "model in .env (NOVA_MODEL, NOVA_VISION_MODEL)."
+                ) from exc
+            except Exception as exc:  # network blips
                 last = exc
                 if attempt == 4:
                     raise LLMError(f"Request to NIM failed: {exc}") from exc
@@ -323,6 +336,11 @@ class LLM:
                             slot.function.name = fn.name
                         if fn.arguments:
                             slot.function.arguments += fn.arguments
+        except APIError as exc:
+            # _post retries opening the request, but a stream that dies part-way
+            # cannot be resumed. Report it like any other NIM failure instead of
+            # letting a raw timeout escape the agent loop.
+            raise LLMError(f"NIM stopped responding mid-reply: {exc}") from exc
         finally:
             close = getattr(response, "close", None)
             if callable(close):
@@ -401,6 +419,9 @@ class LLM:
             messages=[message],
             temperature=0.0,
             max_tokens=1024,
+            # A healthy vision model answers in seconds; past a minute the agent
+            # is better off hearing that it failed than waiting.
+            timeout=60.0,
         )
         self._record(getattr(response, "usage", None))
         return strip_reasoning(response.choices[0].message.content) or "(no description)"

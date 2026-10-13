@@ -317,7 +317,7 @@ Defaults:
 
 ```
 NOVA_MODEL=nvidia/nemotron-3-ultra-550b-a55b           # must support tool calling
-NOVA_VISION_MODEL=meta/llama-3.2-90b-vision-instruct   # must accept images
+NOVA_VISION_MODEL=meta/llama-3.2-11b-vision-instruct   # must accept images
 ```
 
 Nemotron is NVIDIA's line built for agentic work. Lighter alternatives:
