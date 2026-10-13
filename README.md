@@ -124,9 +124,10 @@ Two permissions are needed, both under System Settings → Privacy & Security:
 | **Accessibility** | window control, mouse, keyboard |
 | **Screen Recording** | `see_screen` |
 
-macOS prompts the first time each is used. If the window tools start failing,
-ask Nova to run `accessibility_status` — it reports what is missing and how to
-fix it.
+macOS prompts the first time each is used. The **Permissions** button in the
+window's header is green when both are on; when it is red, click it to open the
+right page in System Settings. If the window tools start failing, ask Nova to
+run `accessibility_status` — it reports what is missing and how to fix it.
 
 An installed app cannot be told to edit a file inside its own bundle, so on
 first launch Nova asks for your NVIDIA key in a window and saves it to

@@ -26,5 +26,9 @@ Nova for macOS
 
    Tick Nova in both lists, then restart it.
 
+   The Permissions button at the top of Nova's window shows where you stand:
+   green when both are on, red when one is missing. Click it while it is red
+   and it opens the right page in System Settings.
+
 Nova runs commands on your Mac. By default it asks before anything that
 changes something. Keep that on until you trust it.

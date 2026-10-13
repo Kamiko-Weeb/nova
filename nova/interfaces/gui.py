@@ -16,6 +16,7 @@ from tkinter import font as tkfont
 from tkinter import scrolledtext
 from typing import Any
 
+from .. import permissions
 from ..agent import Event
 from ..app import build_session
 from ..approval import CallbackApprover
@@ -30,6 +31,8 @@ ACCENT = "#76b3ff"
 GREEN = "#7bd88f"
 AMBER = "#ffcc66"
 RED = "#ff7a7a"
+
+PERMISSION_CHECK_MS = 2000
 
 
 def _font(size: int, *, bold: bool = False, mono: bool = False) -> tkfont.Font:
@@ -73,6 +76,8 @@ class NovaWindow:
         self._build_window()
         self._greet()
         self.root.after(60, self._drain)
+        if self.permissions_button is not None:
+            self._check_permissions()
 
     # --------------------------------------------------------------- widgets
     def _build_window(self) -> None:
@@ -100,6 +105,22 @@ class NovaWindow:
             activebackground=PANEL, activeforeground=FG, relief="flat",
             borderwidth=0, cursor="hand2", font=body,
         ).pack(side="right", padx=12)
+        # macOS only: green when Nova has every permission it needs, red - and a
+        # click away from the right page in System Settings - when it does not.
+        # A Label, because macOS ignores the colours of a tk.Button.
+        self.permissions_button: tk.Label | None = None
+        if permissions.PERMISSIONS:
+            self.permissions_button = tk.Label(
+                header, fg="#0b1220", font=_font(9, bold=True), padx=10, pady=3,
+                cursor="hand2",
+            )
+            self.permissions_button.pack(side="right")
+            self.permissions_button.bind("<Button-1>", self._fix_permissions)
+            self.permissions_button.bind("<Enter>", self._describe_permissions)
+            self.permissions_button.bind(
+                "<Leave>",
+                lambda _e: self.status.configure(text="Working..." if self.busy else "Ready"),
+            )
 
         self.transcript = scrolledtext.ScrolledText(
             self.root, wrap="word", bg=BG, fg=FG, insertbackground=FG,
@@ -159,6 +180,37 @@ class NovaWindow:
         self.usage_label.pack(side="right")
 
         self.root.protocol("WM_DELETE_WINDOW", self._close)
+
+    # ------------------------------------------------------------ permissions
+    def _check_permissions(self) -> None:
+        """Recolour the permissions button, then check again shortly, so it
+        turns green by itself once the switch is flipped in System Settings."""
+        missing = permissions.missing()
+        self.permissions_button.configure(
+            text="✕ Permissions" if missing else "✓ Permissions",
+            bg=RED if missing else GREEN,
+        )
+        self.root.after(PERMISSION_CHECK_MS, self._check_permissions)
+
+    def _describe_permissions(self, _event: tk.Event | None = None) -> None:
+        missing = permissions.missing()
+        states = "  ·  ".join(
+            f"{p.name}: {'off' if p in missing else 'on'}" for p in permissions.PERMISSIONS
+        )
+        self.status.configure(text=states + ("  -  click to fix" if missing else ""))
+
+    def _fix_permissions(self, _event: tk.Event | None = None) -> None:
+        missing = permissions.missing()
+        if not missing:
+            self.status.configure(text="Every permission Nova needs is on.")
+            return
+        first = missing[0]
+        first.open_settings()
+        restart = " Then quit and reopen Nova." if first.needs_restart else ""
+        self.status.configure(
+            text=f"Turn on Nova (or your terminal) in the System Settings window that "
+            f"opened, so it can {first.purpose}.{restart}"
+        )
 
     # ------------------------------------------------------------- transcript
     def _write(self, text: str, tag: str = "text") -> None:
