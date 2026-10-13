@@ -12,8 +12,8 @@ jobs:
     name: macOS .dmg
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -31,7 +31,7 @@ jobs:
           mkdir -p out
           cp dist/*.dmg out/Nova.dmg
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Nova-Mac
           path: out/Nova.dmg
@@ -41,8 +41,8 @@ jobs:
     name: Windows .exe
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -66,7 +66,7 @@ jobs:
       - name: Zip it
         run: Compress-Archive -Path dist/Nova/* -DestinationPath Nova-Windows.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Nova-Windows
           path: Nova-Windows.zip
@@ -79,19 +79,19 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Read version
         id: v
         run: echo "n=$(cat version.txt | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: Nova-Mac, path: assets }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: Nova-Windows, path: assets }
 
       - name: Create or update the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.v.outputs.n }}
           name: Nova v${{ steps.v.outputs.n }}
@@ -102,8 +102,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip pyflakes
