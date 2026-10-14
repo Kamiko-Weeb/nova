@@ -397,3 +397,37 @@ def test_paste_a_real_screenshot(window):
     assert window._paste() == "break"
     assert len(window.attachments) == 1
     assert window.status.cget("text") == "Attached the pasted screenshot"
+
+
+def assert_chips_fit_and_count_all(win, total):
+    row = win.chip_row
+    chips = [c for c in row.winfo_children() if c.winfo_children()]
+    labels = [c for c in row.winfo_children() if not c.winfo_children()]
+    shown = [c for c in chips if c.winfo_ismapped()]
+    hidden = int(labels[0].cget("text").split()[0].lstrip("+")) if labels else 0
+    assert len(shown) + hidden == total
+    if hidden:
+        assert labels[0].winfo_ismapped(), "the +N more count must stay visible"
+    for widget in shown + labels:
+        assert widget.winfo_x() + widget.winfo_width() <= row.winfo_width()
+
+
+def test_long_names_never_push_the_count_out_of_sight(window, tmp_path):
+    names = [f"Screenshot 2026-10-13 at 11.45.{i:02d}.png" for i in range(8)]
+    window._add_attachments(make_files(tmp_path, *names))
+    settle(window, 0.3)
+    assert_chips_fit_and_count_all(window, 8)
+    window.root.geometry("640x440")  # the window's minimum size
+    settle(window, 0.5)
+    assert_chips_fit_and_count_all(window, 8)
+    assert window.entry.winfo_ismapped(), "the message box must never be squeezed out"
+    assert window.status.winfo_ismapped()
+
+
+def test_minimum_size_keeps_every_control_visible(window):
+    window.root.geometry("640x440")
+    settle(window, 0.5)
+    width = window.root.winfo_width()
+    for control in (window.entry, window.attach_button, window.stop_button, window.send_button):
+        assert control.winfo_ismapped(), f"{control} was squeezed out"
+        assert control.winfo_rootx() + control.winfo_width() <= window.root.winfo_rootx() + width

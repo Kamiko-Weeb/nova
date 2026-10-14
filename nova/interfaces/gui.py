@@ -54,6 +54,7 @@ CHIP_BORDER = "#646d86"
 CHIP_HOVER = "#2c3242"
 MAX_CHIPS = 6  # chips shown before "+N more"
 CHIP_NAME_CHARS = 28
+CHIP_GAP = 8  # space after each chip
 MOD = "Command" if sys.platform == "darwin" else "Control"  # for key bindings
 KEYS = "⌘" if sys.platform == "darwin" else "Ctrl+"  # for people
 ATTACH_HINT = (
@@ -144,6 +145,8 @@ class NovaWindow:
         self.pending_approval: ApprovalRequest | None = None
         self._drag_leave_job: str | None = None
         self._backspace_held = False
+        self._resize_job: str | None = None
+        self._chip_row_width = 0
         self._backspace_release_job: str | None = None
 
         self.attachments: list[Path] = []
@@ -204,9 +207,13 @@ class NovaWindow:
             self.permissions_button.bind("<Enter>", self._describe_permissions)
             self.permissions_button.bind("<Leave>", lambda _e: self._restore_status())
 
+        # height=1: ask for little and expand into whatever is left. Asking for
+        # the default 24 lines made the packer, which serves widgets in order,
+        # squeeze out everything packed after it - the chips, the message box
+        # and the status bar - once the window was shorter than about 600px.
         self.transcript = scrolledtext.ScrolledText(
             self.root, wrap="word", bg=BG, fg=FG, insertbackground=FG,
-            font=body, relief="flat", borderwidth=0,
+            font=body, relief="flat", borderwidth=0, height=1,
             padx=16, pady=12, state="disabled", spacing1=2, spacing3=6,
         )
         self.transcript.pack(fill="both", expand=True)
@@ -225,8 +232,10 @@ class NovaWindow:
         footer = self.footer = tk.Frame(self.root, bg=PANEL)
         footer.pack(fill="x")
 
+        # width=1, for the same reason as the transcript's height=1: the default
+        # 80 characters left the buttons beside it no room in a narrow window.
         self.entry = tk.Text(
-            footer, height=3, wrap="word", bg=FIELD, fg=FG, insertbackground=FG,
+            footer, height=3, width=1, wrap="word", bg=FIELD, fg=FG, insertbackground=FG,
             font=body, relief="flat", borderwidth=0, padx=10, pady=8,
         )
         self.entry.pack(side="left", fill="both", expand=True, padx=(12, 8), pady=10)
@@ -293,6 +302,7 @@ class NovaWindow:
                 widget.dnd_bind("<<DropLeave>>", self._on_drag_leave)
                 widget.dnd_bind("<<Drop>>", self._on_drop)
 
+        self.root.bind("<Configure>", self._on_resize, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
     # ------------------------------------------------------------ permissions
@@ -382,22 +392,46 @@ class NovaWindow:
         self._backspace_release_job = None
 
     def _render_chips(self) -> None:
+        """One row of chips: as many as fit, then a count of the rest."""
+        self._resize_job = None
         for child in self.chip_row.winfo_children():
             child.destroy()
         if not self.attachments:
             self.chip_row.pack_forget()
             return
+        self.chip_row.pack(fill="x", padx=12, before=self.footer)
+        total = len(self.attachments)
+        room = self.root.winfo_width() - 24  # the row's side padding
+        # Keep space for the count, so a long name can never push it out of sight.
+        reserve = self.small_font.measure(f"+{total} more") + CHIP_GAP
+        used = shown = 0
         for path in self.attachments[:MAX_CHIPS]:
-            self._make_chip(path)
-        hidden = len(self.attachments) - MAX_CHIPS
-        if hidden > 0:
+            chip = self._make_chip(path)
+            chip.update_idletasks()
+            need = chip.winfo_reqwidth() + CHIP_GAP
+            limit = room - (reserve if shown + 1 < total else 0)
+            if shown and used + need > limit:
+                chip.destroy()
+                break
+            used += need
+            shown += 1
+        if shown < total:
             tk.Label(
-                self.chip_row, text=f"+{hidden} more", bg=PANEL, fg=MUTED,
+                self.chip_row, text=f"+{total - shown} more", bg=PANEL, fg=MUTED,
                 font=self.small_font,
             ).pack(side="left", pady=(8, 0))
-        self.chip_row.pack(fill="x", padx=12, before=self.footer)
 
-    def _make_chip(self, path: Path) -> None:
+    def _on_resize(self, event: tk.Event) -> None:
+        """Re-flow the chips when the window's width changes."""
+        if event.widget is not self.root or event.width == self._chip_row_width:
+            return
+        self._chip_row_width = event.width
+        if self.attachments:
+            if self._resize_job is not None:
+                self.root.after_cancel(self._resize_job)
+            self._resize_job = self.root.after(100, self._render_chips)
+
+    def _make_chip(self, path: Path) -> tk.Frame:
         """One attachment: a type tag, its name, and a ✕ that removes it.
         Hovering anywhere on it shows the full path and size."""
         name = path.name + ("/" if path.is_dir() else "")
@@ -407,7 +441,7 @@ class NovaWindow:
             self.chip_row, bg=FIELD, highlightthickness=1,
             highlightbackground=CHIP_BORDER, highlightcolor=CHIP_BORDER,
         )
-        chip.pack(side="left", padx=(0, 8), pady=(8, 0))
+        chip.pack(side="left", padx=(0, CHIP_GAP), pady=(8, 0))
         tk.Label(chip, text=badge(path), bg=FIELD, fg=ACCENT, font=self.badge_font).pack(
             side="left", padx=(8, 4), pady=4
         )
@@ -444,6 +478,7 @@ class NovaWindow:
         for widget in parts:
             widget.bind("<Enter>", enter, add="+")
             widget.bind("<Leave>", leave, add="+")
+        return chip
 
     def _restore_status(self) -> None:
         self.status.configure(text="Working..." if self.busy else "Ready")
