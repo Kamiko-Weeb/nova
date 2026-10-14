@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import time
 import urllib.parse
+import webbrowser
 
 import httpx
 from bs4 import BeautifulSoup
@@ -160,3 +161,27 @@ def register(registry: Registry, cfg: Config) -> None:
         text = re.sub(r"\n{3,}", "\n\n", text)
         title = soup.title.get_text(strip=True) if soup.title else url
         return truncate(f"{title}\n{url}\n\n{text}", max_chars)
+
+    @registry.define(
+        "open_url",
+        description=(
+            "Open a web page in the owner's browser so they can see it. Use this when "
+            "they ask you to open, show, play or search something on a site; a YouTube "
+            "search, for example, is https://www.youtube.com/results?search_query=... "
+            "Spaces and accents in the link are fine; they are encoded for you."
+        ),
+        parameters=schema({"url": string("Full URL including https://")}, ["url"]),
+        dangerous=True,
+        preview=lambda a: f"Open in your browser:\n{a.get('url', '')}",
+    )
+    def open_url(url: str) -> str:
+        if "://" not in url:
+            url = "https://" + url
+        # Only web pages: a file:// or app link could run something on this Mac.
+        if not url.lower().startswith(("http://", "https://")):
+            return f"ERROR: open_url only opens web pages (http or https), not {url}"
+        # Encode spaces and non-ASCII; keep URL syntax and existing %-escapes.
+        url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=%")
+        if not webbrowser.open(url):
+            return f"ERROR: could not open a browser for {url}"
+        return f"Opened {url} in the browser."

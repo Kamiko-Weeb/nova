@@ -186,7 +186,7 @@ Tools marked ⚠️ ask for your approval before running.
 `write_file` ⚠️ · `move_path` ⚠️ · `copy_path` ⚠️ · `delete_path` ⚠️
 (deletes go to the Recycle Bin by default)
 
-**Web** — `web_search` · `fetch_url`
+**Web** — `web_search` · `fetch_url` · `open_url` ⚠️ (opens a page in your browser)
 
 **Windows UI Automation** — `list_windows` · `inspect_window` ·
 `read_window_text` · `focus_window` ⚠️ · `click_control` ⚠️ ·
