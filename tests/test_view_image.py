@@ -94,3 +94,28 @@ def test_fit_for_vision_shrinks_big_noisy_images():
     jpeg = fit_for_vision(noisy)
     assert jpeg[:2] == b"\xff\xd8"
     assert len(jpeg) <= MAX_JPEG_BYTES
+
+
+def test_transparent_images_are_shown_on_white(tmp_path):
+    from PIL import Image, ImageDraw
+
+    path = tmp_path / "logo.png"
+    image = Image.new("RGBA", (40, 20), (0, 0, 0, 0))  # fully transparent
+    ImageDraw.Draw(image).rectangle((10, 5, 20, 15), fill=(0, 0, 0, 255))  # a black mark
+    image.save(path)
+    opened = documents.open_image(path)
+    assert opened.getpixel((0, 0)) == (255, 255, 255)  # background, not black
+    assert opened.getpixel((15, 10)) == (0, 0, 0)  # the mark survives
+
+
+def test_palette_transparency_is_shown_on_white(tmp_path):
+    from PIL import Image
+
+    path = tmp_path / "icon.png"
+    image = Image.new("P", (10, 10), 0)
+    image.putpalette([0, 0, 0, 255, 0, 0] + [0] * 762)  # 0 = black, 1 = red
+    image.paste(1, (5, 5, 10, 10))  # a red square
+    image.save(path, transparency=0)  # black is the transparent colour
+    opened = documents.open_image(path)
+    assert opened.getpixel((0, 0)) == (255, 255, 255)
+    assert opened.getpixel((7, 7)) == (255, 0, 0)

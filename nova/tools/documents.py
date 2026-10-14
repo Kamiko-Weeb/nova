@@ -207,7 +207,15 @@ def open_image(path: Path):
         register_heif_opener()
     with Image.open(path) as image:
         image.seek(0)  # the first frame of an animation
-        return ImageOps.exif_transpose(image).convert("RGB")
+        image = ImageOps.exif_transpose(image)
+        if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
+            # Transparent pixels have no colour of their own, and dropping the
+            # alpha turns them black - which hides dark text and line art. Show
+            # them on white instead.
+            layer = image.convert("RGBA")
+            backdrop = Image.new("RGBA", layer.size, (255, 255, 255, 255))
+            return Image.alpha_composite(backdrop, layer).convert("RGB")
+        return image.convert("RGB")
 
 
 def register(registry: Registry, cfg: Config, llm: LLM) -> None:
