@@ -159,3 +159,37 @@ def make_image(tmp_path):
         return path
 
     return make
+
+
+@pytest.fixture
+def docx_with_fields(tmp_path):
+    """A Word document whose text sits in content controls (fill-in fields),
+    plus a text box stored twice, as Word does, for old versions."""
+    import docx
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    mc = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+    document = docx.Document()
+    paragraph = document.add_paragraph("This agreement is between ")
+    paragraph._p.append(parse_xml(
+        f'<w:sdt {nsdecls("w")}><w:sdtContent><w:r><w:t>ACME Corp</w:t></w:r>'
+        "</w:sdtContent></w:sdt>"
+    ))
+    paragraph._p.append(parse_xml(
+        f'<w:r {nsdecls("w")}><w:t xml:space="preserve"> and the client.</w:t></w:r>'
+    ))
+    boxed = document.add_paragraph()
+    boxed._p.append(parse_xml(
+        f'<w:r {nsdecls("w")} {mc}><mc:AlternateContent>'
+        '<mc:Choice Requires="wps"><w:t>Boxed note</w:t></mc:Choice>'
+        "<mc:Fallback><w:t>Boxed note</w:t></mc:Fallback>"
+        "</mc:AlternateContent></w:r>"
+    ))
+    document.element.body[-1].addprevious(parse_xml(  # before the section settings
+        f'<w:sdt {nsdecls("w")}><w:sdtContent><w:p><w:r><w:t>Signed in Victoria</w:t>'
+        "</w:r></w:p></w:sdtContent></w:sdt>"
+    ))
+    path = tmp_path / "contract.docx"
+    document.save(path)
+    return path

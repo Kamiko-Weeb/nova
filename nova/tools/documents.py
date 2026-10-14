@@ -86,17 +86,49 @@ def _pdf(path: Path) -> Extracted:
 
 
 def _docx(path: Path) -> Extracted:
-    import docx
-    from docx.table import Table
+    """Paragraphs and tables in document order, read straight from the XML.
 
-    lines = []
-    for block in docx.Document(str(path)).iter_inner_content():
-        if isinstance(block, Table):
-            for row in block.rows:
-                lines.append(" | ".join(cell.text.strip() for cell in row.cells))
-        else:
-            lines.append(block.text)
-    return Extracted("\n".join(lines), "Word document")
+    python-docx's own paragraph text skips fill-in fields (content controls)
+    and anything they wrap, which are exactly where a contract or form keeps
+    the parts that matter.
+    """
+    import docx
+    from docx.oxml.ns import qn
+
+    fallback = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+
+    def text_of(element) -> str:
+        parts: list[str] = []
+
+        def walk(node) -> None:
+            for child in node:
+                if child.tag == fallback:  # the same content again, for old Word
+                    continue
+                if child.tag == qn("w:t"):
+                    parts.append(child.text or "")
+                elif child.tag in (qn("w:tab"), qn("w:br")) and node.tag == qn("w:r"):
+                    parts.append("\t" if child.tag == qn("w:tab") else "\n")
+                else:
+                    walk(child)
+
+        walk(element)
+        return "".join(parts)
+
+    def blocks(parent):
+        for child in parent.iterchildren():
+            if child.tag == qn("w:p"):
+                yield text_of(child)
+            elif child.tag == qn("w:tbl"):
+                for row in child.iterchildren(qn("w:tr")):
+                    cells = row.iterchildren(qn("w:tc"))
+                    yield " | ".join(" ".join(blocks(cell)).strip() for cell in cells)
+            elif child.tag == qn("w:sdt"):  # a fill-in field around whole paragraphs
+                content = child.find(qn("w:sdtContent"))
+                if content is not None:
+                    yield from blocks(content)
+
+    body = docx.Document(str(path)).element.body
+    return Extracted("\n".join(blocks(body)), "Word document")
 
 
 def _xlsx(path: Path) -> Extracted:

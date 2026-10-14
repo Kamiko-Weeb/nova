@@ -133,3 +133,9 @@ def test_aes_pdf_with_empty_password_opens(name):
 def test_aes_pdf_with_real_password_is_reported():
     with pytest.raises(DocumentError, match="aes256-locked.pdf is password-protected"):
         extract_text(DATA / "aes256-locked.pdf")
+
+
+def test_docx_reads_fill_in_fields_and_text_boxes_once(docx_with_fields):
+    assert extract_text(docx_with_fields).text == (
+        "This agreement is between ACME Corp and the client.\nBoxed note\nSigned in Victoria"
+    )
