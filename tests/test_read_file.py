@@ -76,3 +76,19 @@ def test_workspace_restriction_still_applies(cfg, tmp_path):
     registry = Registry()
     files.register(registry, dataclasses.replace(cfg, restrict_to_workspace=True))
     assert "outside the allowed workspace" in registry.invoke("read_file", {"path": "/etc/hosts"})
+
+
+def test_big_files_are_not_read_whole(read_file, tmp_path):
+    import tracemalloc
+
+    path = tmp_path / "movie.mp4"
+    with open(path, "wb") as handle:
+        handle.truncate(64 * 1024 * 1024)  # 64 MB of zeros, stored sparsely
+    tracemalloc.start()
+    try:
+        out = read_file(path=str(path))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert "binary file (.mp4, 64.0 MB)" in out
+    assert peak < 8 * 1024 * 1024  # a sample of the file, not all of it

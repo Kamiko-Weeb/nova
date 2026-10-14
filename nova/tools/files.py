@@ -61,7 +61,8 @@ def register(registry: Registry, cfg: Config) -> None:
                 extracted = extract_text(target)
                 text, kind = extracted.text, f"{extracted.summary}, "
             else:
-                raw = target.read_bytes()[:TEXT_READ_LIMIT]
+                with target.open("rb") as handle:  # never more than is shown
+                    raw = handle.read(TEXT_READ_LIMIT)
                 if b"\0" in raw[:8192]:
                     size = format_size(target.stat().st_size)
                     return (
