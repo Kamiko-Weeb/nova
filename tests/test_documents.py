@@ -139,3 +139,20 @@ def test_docx_reads_fill_in_fields_and_text_boxes_once(docx_with_fields):
     assert extract_text(docx_with_fields).text == (
         "This agreement is between ACME Corp and the client.\nBoxed note\nSigned in Victoria"
     )
+
+
+def test_pptx_survives_a_shape_it_cannot_classify(tmp_path):
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[5])
+    slide.shapes.title.text = "Roadmap"
+    box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(3), Inches(1))
+    box.text_frame.text = "Odd shape text"
+    shape = box._element  # strip what python-pptx uses to classify a shape
+    shape.nvSpPr.cNvSpPr.attrib.pop("txBox", None)
+    shape.spPr.remove(shape.spPr.prstGeom)
+    path = tmp_path / "odd.pptx"
+    deck.save(path)
+    assert extract_text(path).text == "--- slide 1 ---\nRoadmap\nOdd shape text"

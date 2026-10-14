@@ -164,7 +164,11 @@ def _pptx(path: Path) -> Extracted:
 
     def shape_text(shapes):
         for shape in shapes:
-            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            try:
+                kind = shape.shape_type
+            except NotImplementedError:  # some shapes python-pptx cannot classify
+                kind = None
+            if kind == MSO_SHAPE_TYPE.GROUP:
                 yield from shape_text(shape.shapes)
             elif shape.has_table:
                 for row in shape.table.rows:
