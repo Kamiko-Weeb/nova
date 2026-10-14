@@ -23,7 +23,7 @@ send2trash>=1.8.3
 pywinauto>=0.6.8; sys_platform == "win32"
 
 # Reading attached documents (each optional: without one, only that format fails)
-pypdf>=5.0
+pypdf[crypto]>=5.0  # [crypto]: modern AES-encrypted PDFs need it
 python-docx>=1.1
 openpyxl>=3.1
 python-pptx>=1.0

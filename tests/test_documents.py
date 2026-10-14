@@ -1,5 +1,6 @@
 import builtins
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -117,3 +118,18 @@ def test_extraction_is_cached_until_the_file_changes(make_pdf):
     path.write_bytes(path.read_bytes() + b"\n")  # new size, so a new cache key
     extract_text(path)
     assert documents._extract.cache_info().misses == 2
+
+
+# Pre-made AES-encrypted PDFs: modern Acrobat, banks and e-invoices use AES,
+# which pypdf can only decrypt with the cryptography package installed.
+DATA = Path(__file__).parent / "data"
+
+
+@pytest.mark.parametrize("name", ["aes128-open.pdf", "aes256-open.pdf"])
+def test_aes_pdf_with_empty_password_opens(name):
+    assert "AES open" in extract_text(DATA / name).text
+
+
+def test_aes_pdf_with_real_password_is_reported():
+    with pytest.raises(DocumentError, match="aes256-locked.pdf is password-protected"):
+        extract_text(DATA / "aes256-locked.pdf")
