@@ -63,6 +63,9 @@ ATTACH_HINT = (
 # A drag passing from one part of the window to another reports leaving the
 # first just before entering the second; waiting this long avoids a flicker.
 DRAG_LEAVE_MS = 80
+# A key release followed this quickly by another press is key repeat (the
+# X11 way of reporting a held key), not the key being let go.
+BACKSPACE_RELEASE_MS = 50
 
 
 def _make_root() -> tuple[tk.Tk, bool]:
@@ -104,6 +107,8 @@ class NovaWindow:
         self.streaming = False
         self.pending_approval: ApprovalRequest | None = None
         self._drag_leave_job: str | None = None
+        self._backspace_held = False
+        self._backspace_release_job: str | None = None
 
         self.attachments: list[Path] = []
 
@@ -193,6 +198,7 @@ class NovaWindow:
         self.entry.bind("<Shift-Return>", lambda _e: None)
         self.entry.bind("<Escape>", lambda _e: self._stop())
         self.entry.bind("<BackSpace>", self._on_backspace)
+        self.entry.bind("<KeyRelease-BackSpace>", self._on_backspace_release)
         self.entry.bind(f"<{MOD}-v>", self._paste)
         # The keyboard way to attach. Bound on the message box too, because its
         # own Ctrl+O binding (open a new line) would otherwise run first.
@@ -315,11 +321,29 @@ class NovaWindow:
         self._restore_status()
 
     def _on_backspace(self, _event: tk.Event | None = None) -> str | None:
-        """Backspace in an empty message box takes off the last attachment."""
-        if self.attachments and not self.entry.get("1.0", "end-1c"):
-            self._remove_attachment(self.attachments[-1])
-            return "break"
-        return None
+        """Backspace in an empty message box takes off the last attachment - but
+        only on a fresh press. A key held down to clear the text keeps repeating
+        once the text is gone, and must not strip the attachments as well."""
+        if self._backspace_release_job is not None:  # released and pressed at once
+            self.root.after_cancel(self._backspace_release_job)
+            self._backspace_release_job = None
+        repeat = self._backspace_held
+        self._backspace_held = True
+        if repeat or not self.attachments or self.entry.get("1.0", "end-1c"):
+            return None
+        removed = self.attachments[-1]
+        self._remove_attachment(removed)
+        self.status.configure(text=f"Removed {removed.name}")
+        return "break"
+
+    def _on_backspace_release(self, _event: tk.Event | None = None) -> None:
+        self._backspace_release_job = self.root.after(
+            BACKSPACE_RELEASE_MS, self._backspace_up
+        )
+
+    def _backspace_up(self) -> None:
+        self._backspace_held = False
+        self._backspace_release_job = None
 
     def _render_chips(self) -> None:
         for child in self.chip_row.winfo_children():

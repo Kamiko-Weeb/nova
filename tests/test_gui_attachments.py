@@ -303,3 +303,40 @@ def _contrast(a, b):
 def test_attach_label_is_readable_on_macos_buttons(window):
     # macOS ignores a tk.Button's bg and draws a white face in an active window.
     assert _contrast(window.attach_button.cget("fg"), "#ffffff") >= 4.5
+
+
+def tap_backspace(win):
+    """A Backspace pressed and let go, plus what Tk's own binding does with the
+    press if Nova's handler lets it through: delete a character."""
+    result = win._on_backspace()
+    if result is None and win.entry.get("1.0", "end-1c"):
+        win.entry.delete("end-2c")
+    win._on_backspace_release()
+    settle(win, 0.1)
+    return result
+
+
+def test_holding_backspace_does_not_strip_attachments(window, tmp_path):
+    files = make_files(tmp_path, "a.txt", "b.txt", "c.txt")
+    window._add_attachments(files)
+    window.entry.insert("1.0", "x")
+    window._on_backspace()  # pressed: deletes the text
+    window.entry.delete("end-2c")
+    window._on_backspace()  # held: repeats as further presses (macOS, Windows)
+    window._on_backspace()
+    window._on_backspace_release()  # or as release-and-press pairs (X11)
+    window._on_backspace()
+    assert window.attachments == files
+    window._on_backspace_release()  # finally let go
+    settle(window, 0.1)
+    assert window.attachments == files
+
+
+def test_a_fresh_backspace_removes_the_last_attachment_and_says_so(window, tmp_path):
+    a, b = make_files(tmp_path, "a.txt", "b.txt")
+    window._add_attachments([a, b])
+    assert tap_backspace(window) == "break"
+    assert window.attachments == [a]
+    assert window.status.cget("text") == "Removed b.txt"
+    tap_backspace(window)
+    assert window.attachments == []
