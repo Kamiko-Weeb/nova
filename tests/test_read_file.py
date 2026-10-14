@@ -92,3 +92,11 @@ def test_big_files_are_not_read_whole(read_file, tmp_path):
         tracemalloc.stop()
     assert "binary file (.mp4, 64.0 MB)" in out
     assert peak < 8 * 1024 * 1024  # a sample of the file, not all of it
+
+
+@pytest.mark.parametrize("codec", ["utf-16-le", "utf-16-be"])
+def test_utf16_text_with_a_byte_order_mark_is_read(read_file, tmp_path, codec):
+    # PowerShell 5 writes UTF-16 by default: full of zero bytes, but text.
+    path = (tmp_path / "out.txt").resolve()
+    path.write_bytes(("﻿" + "first\nsecond\n").encode(codec))
+    assert read_file(path=str(path)) == f"{path}  (2 lines total)\n     1\tfirst\n     2\tsecond"

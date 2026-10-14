@@ -1,6 +1,7 @@
 """File system tools."""
 from __future__ import annotations
 
+import codecs
 import fnmatch
 import shutil
 import sys
@@ -63,13 +64,19 @@ def register(registry: Registry, cfg: Config) -> None:
             else:
                 with target.open("rb") as handle:  # never more than is shown
                     raw = handle.read(TEXT_READ_LIMIT)
-                if b"\0" in raw[:8192]:
+                if raw[:2] in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
+                    # UTF-16 - PowerShell 5's default output - is full of zero
+                    # bytes, but its byte-order mark says it is text all the same.
+                    text = raw.decode("utf-16", errors="replace")
+                elif b"\0" in raw[:8192]:
                     size = format_size(target.stat().st_size)
                     return (
                         f"{target}: binary file ({suffix or 'no extension'}, {size}) "
                         "- read_file can only show text."
                     )
-                text, kind = raw.decode("utf-8", errors="replace"), ""
+                else:
+                    text = raw.decode("utf-8", errors="replace")
+                kind = ""
         except DocumentError as exc:
             return f"ERROR: {exc}"
         except PermissionError:
