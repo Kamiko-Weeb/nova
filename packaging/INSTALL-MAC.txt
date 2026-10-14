@@ -26,6 +26,11 @@ Nova for macOS
 
    Tick Nova in both lists, then restart it.
 
+   From v5 on, every release is signed with the same certificate, so macOS
+   keeps these permissions when you update. Coming from v4 or earlier, give
+   them once more: if Nova already looks ticked, remove it from the list
+   with the - button and add it again.
+
    The Permissions button at the top of Nova's window shows where you stand:
    green when both are on, red when one is missing. Click it while it is red
    and it opens the right page in System Settings.

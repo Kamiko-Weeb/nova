@@ -21,9 +21,33 @@ jobs:
         id: v
         run: echo "n=$(cat version.txt | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
 
+      # Every release is signed with the same certificate. macOS ties Nova's
+      # Accessibility and Screen Recording permissions to the signer, so a
+      # stable one keeps them across updates; an ad-hoc signature does not.
+      - name: Load the signing certificate
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MAC_CERT_P12" ]; then
+            echo "::error::The MAC_CERT_P12 secret is missing. Without it macOS would drop Nova's permissions on update."
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 16)"
+          echo "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$MAC_CERT_PASSWORD" -f pkcs12 -t cert -A
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain"
+          rm "$RUNNER_TEMP/signing.p12"
+
       - name: Build the disk image
         env:
           NOVA_VERSION: ${{ steps.v.outputs.n }}
+          NOVA_SIGN_IDENTITY: Nova Code Signing
         run: bash packaging/build-macos.sh
 
       - name: Rename to a stable download name

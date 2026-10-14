@@ -129,6 +129,9 @@ window's header is green when both are on; when it is red, click it to open the
 right page in System Settings. If the window tools start failing, ask Nova to
 run `accessibility_status` — it reports what is missing and how to fix it.
 
+Releases from v5 on are all signed with the same certificate, so the
+permissions survive updates. Coming from v4 or earlier, grant them once more.
+
 An installed app cannot be told to edit a file inside its own bundle, so on
 first launch Nova asks for your NVIDIA key in a window and saves it to
 `~/.nova/.env`. Notes and logs go there too, rather than into the bundle.

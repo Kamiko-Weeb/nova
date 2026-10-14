@@ -74,11 +74,21 @@ APP="$DIST/Nova.app"
 'Nova controls other applications to carry out the tasks you give it.'" \
   "$APP/Contents/Info.plist" 2>/dev/null || true
 
-echo "==> Ad-hoc signing"
-# Not a Developer ID signature - users still get Gatekeeper's warning on first
-# launch - but it keeps the bundle internally consistent.
-codesign --force --deep --sign - "$APP" 2>/dev/null || \
-  echo "    (codesign unavailable, continuing unsigned)"
+echo "==> Signing"
+# Not a Developer ID signature either way - users still get Gatekeeper's
+# warning on first launch. NOVA_SIGN_IDENTITY names a certificate in the
+# keychain (CI loads one): signing every release with it keeps the designated
+# requirement the same, so macOS keeps Nova's Accessibility and Screen
+# Recording permissions across updates. Without it the signature is ad-hoc,
+# which keeps the bundle consistent but ties those permissions to this build.
+if [[ -n "${NOVA_SIGN_IDENTITY:-}" ]]; then
+  codesign --force --deep --timestamp=none --sign "$NOVA_SIGN_IDENTITY" "$APP"
+  codesign --verify --deep --strict "$APP"
+  codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => /    designated: /p'
+else
+  codesign --force --deep --sign - "$APP" 2>/dev/null || \
+    echo "    (codesign unavailable, continuing unsigned)"
+fi
 
 echo "==> Assembling the disk image"
 mkdir -p "$STAGE"
