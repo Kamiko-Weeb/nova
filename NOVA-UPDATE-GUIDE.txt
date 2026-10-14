@@ -108,9 +108,11 @@ The app opens and immediately closes
         Windows:  python main.py gui
         Mac:      /Applications/Nova.app/Contents/MacOS/Nova
 
-Mac says "Nova is damaged and can't be opened"
+Mac won't open Nova ("could not verify" or "damaged")
     Gatekeeper, because the app is not signed with a paid
-    Apple Developer ID. Right-click the app -> Open -> Open.
+    Apple Developer ID. On macOS 15 and later, try to open it,
+    then System Settings -> Privacy & Security -> Open Anyway.
+    On older macOS: right-click the app -> Open -> Open.
     If that fails, run once:
         xattr -cr /Applications/Nova.app
 

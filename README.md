@@ -113,9 +113,10 @@ python3 main.py gui
 ```
 
 **As an installed app:** download the `.dmg` from the
-[Releases page](../../releases), drag Nova to Applications, then **right-click →
-Open** the first time (it is not signed with a paid Apple Developer ID, so
-Gatekeeper objects once).
+[Releases page](../../releases) and drag Nova to Applications. It is not signed
+with a paid Apple Developer ID, so Gatekeeper blocks the first launch of each
+version. On macOS 15 and later, try to open it, then click **Open Anyway** under
+System Settings → Privacy & Security; on older versions, **right-click → Open**.
 
 Two permissions are needed, both under System Settings → Privacy & Security:
 
