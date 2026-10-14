@@ -68,6 +68,42 @@ DRAG_LEAVE_MS = 80
 BACKSPACE_RELEASE_MS = 50
 
 
+def _grab_clipboard() -> Any:
+    """What a paste should attach: a list of file paths, an image, or None to
+    let the text paste go ahead."""
+    if sys.platform == "darwin":
+        return _grab_mac_clipboard()
+    from PIL import ImageGrab
+
+    return ImageGrab.grabclipboard()  # file paths or an image, on Windows
+
+
+def _grab_mac_clipboard() -> Any:
+    """Files copied in Finder come back as their paths. An image comes back only
+    when it is what the copy is mainly of: Finder adds a picture of a file's
+    icon, and Numbers or Excel a picture of the copied cells, but they list the
+    file or the text first, and that is what the owner meant to paste."""
+    import io
+
+    from AppKit import NSPasteboard, NSPasteboardURLReadingFileURLsOnlyKey, NSURL
+    from PIL import Image
+
+    board = NSPasteboard.generalPasteboard()
+    urls = board.readObjectsForClasses_options_(
+        [NSURL], {NSPasteboardURLReadingFileURLsOnlyKey: True}
+    )
+    if urls:
+        return [str(url.path()) for url in urls]
+    items = board.pasteboardItems() or []
+    preferred = list(items[0].types()) if items else []
+    if not preferred or preferred[0] not in _CLIPBOARD_IMAGE_TYPES:
+        return None
+    return Image.open(io.BytesIO(bytes(items[0].dataForType_(preferred[0]))))
+
+
+_CLIPBOARD_IMAGE_TYPES = ("public.png", "public.tiff", "public.jpeg")
+
+
 def _make_root() -> tuple[tk.Tk, bool]:
     """The window's root, able to take dropped files when tkinterdnd2 loads."""
     try:
@@ -413,17 +449,15 @@ class NovaWindow:
         self.status.configure(text="Working..." if self.busy else "Ready")
 
     def _paste(self, _event: tk.Event | None = None) -> str | None:
-        """Attach a pasted image (or, on Windows, copied files). Anything else
-        falls through to the normal text paste."""
+        """Attach pasted files or a pasted image. Anything else falls through
+        to the normal text paste."""
         try:
-            from PIL import ImageGrab
-
-            grabbed = ImageGrab.grabclipboard()
+            grabbed = _grab_clipboard()
         except Exception:
             return None
         if grabbed is None:
             return None
-        if isinstance(grabbed, list):  # file paths, which Windows provides
+        if isinstance(grabbed, list):  # copied files
             self._add_attachments(grabbed)
         else:
             pasted = save_pasted_image(grabbed)

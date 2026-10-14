@@ -340,3 +340,60 @@ def test_a_fresh_backspace_removes_the_last_attachment_and_says_so(window, tmp_p
     assert window.status.cget("text") == "Removed b.txt"
     tap_backspace(window)
     assert window.attachments == []
+
+
+# --- clipboards built the way macOS apps build them --------------------------
+def png_bytes():
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), "orange").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def set_pasteboard(*types_and_values):
+    """Replace the clipboard with one item offering these (type, value) pairs,
+    in this order of preference - the way the copying app would."""
+    from AppKit import NSPasteboard, NSPasteboardItem
+    from Foundation import NSData
+
+    item = NSPasteboardItem.alloc().init()
+    for uti, value in types_and_values:
+        if isinstance(value, str):
+            item.setString_forType_(value, uti)
+        else:
+            item.setData_forType_(NSData.dataWithBytes_length_(value, len(value)), uti)
+    board = NSPasteboard.generalPasteboard()
+    board.clearContents()
+    board.writeObjects_([item])
+
+
+def test_paste_a_file_copied_in_finder_attaches_the_file(window, tmp_path):
+    from Foundation import NSURL
+
+    (doc,) = make_files(tmp_path, "report.pdf")
+    set_pasteboard(  # Finder offers the file, its name, and a picture of its icon
+        ("public.file-url", NSURL.fileURLWithPath_(str(doc)).absoluteString()),
+        ("public.utf8-plain-text", "report.pdf"),
+        ("public.png", png_bytes()),
+    )
+    assert window._paste() == "break"
+    assert window.attachments == [doc]
+
+
+def test_paste_spreadsheet_cells_pastes_their_text(window):
+    set_pasteboard(  # Numbers and Excel offer the text first, then a picture of it
+        ("public.utf8-plain-text", "Item\tPrice\nPen\t2"),
+        ("public.png", png_bytes()),
+    )
+    assert window._paste() is None  # normal text paste goes ahead
+    assert window.attachments == []
+
+
+def test_paste_a_real_screenshot(window):
+    subprocess.run(["screencapture", "-c", "-x", "-R0,0,10,10"], check=True)  # a 10x10 corner
+    assert window._paste() == "break"
+    assert len(window.attachments) == 1
+    assert window.status.cget("text") == "Attached the pasted screenshot"
