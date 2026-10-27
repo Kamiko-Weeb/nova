@@ -57,6 +57,8 @@ def register(registry: Registry, cfg: Config) -> None:
         ),
     )
     def web_search(query: str, max_results: int = 8) -> str:
+        if cfg.leaks_secret(query):
+            return "ERROR: refused - the query contains one of Nova's API keys or tokens."
         errors: list[str] = []
         # Two passes over each endpoint: a throttled reply looks like an empty
         # page, and a short pause is usually enough to clear it.
@@ -137,6 +139,8 @@ def register(registry: Registry, cfg: Config) -> None:
     def fetch_url(url: str, max_chars: int = 8000) -> str:
         if not url.lower().startswith(("http://", "https://")):
             url = "https://" + url
+        if cfg.leaks_secret(url):
+            return "ERROR: refused - the URL contains one of Nova's API keys or tokens."
         try:
             response = httpx.get(
                 url,
@@ -180,6 +184,8 @@ def register(registry: Registry, cfg: Config) -> None:
         # Only web pages: a file:// or app link could run something on this Mac.
         if not url.lower().startswith(("http://", "https://")):
             return f"ERROR: open_url only opens web pages (http or https), not {url}"
+        if cfg.leaks_secret(url):
+            return "ERROR: refused - the URL contains one of Nova's API keys or tokens."
         # Encode spaces and non-ASCII; keep URL syntax and existing %-escapes.
         url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=%")
         if not webbrowser.open(url):
