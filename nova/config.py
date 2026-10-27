@@ -58,6 +58,37 @@ def load_dotenv(path: Path | None = None) -> None:
         os.environ.setdefault(key.strip(), value)
 
 
+# Files that hold credentials. The agent's read tools refuse these so a prompt
+# injection on a fetched web page cannot get Nova to read a key and then leak
+# it through fetch_url or web_search. Templates stay readable.
+SECRET_FILE_NAMES = {
+    ".env", ".netrc", ".pgpass", ".npmrc", ".pypirc", ".git-credentials",
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials.json",
+    "service-account.json", "secrets.json", "secrets.yaml", "secrets.yml",
+}
+SECRET_FILE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".keychain", ".keychain-db", ".jks"}
+ENV_TEMPLATE_SUFFIXES = {".example", ".sample", ".template", ".dist"}
+SECRET_DIRS = (".ssh", ".aws", ".gnupg", ".docker", ".kube", "gcloud", "Keychains")
+
+
+def is_secret_file(path: Path) -> bool:
+    """True for a file that is likely to hold credentials."""
+    path = Path(path)
+    name = path.name.lower()
+    if name.startswith(".env"):
+        # .env, .env.local, .env.production are secret; .env.example is not.
+        return Path(name).suffix not in ENV_TEMPLATE_SUFFIXES
+    if name in SECRET_FILE_NAMES or path.suffix.lower() in SECRET_FILE_SUFFIXES:
+        return True
+    if any(part in SECRET_DIRS for part in path.parts[:-1]):
+        return True
+    try:
+        resolved = path.resolve()
+        return any(resolved == c.resolve() for c in env_candidates())
+    except OSError:
+        return False
+
+
 def _flag(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -182,6 +213,19 @@ class Config:
             "    NVIDIA_API_KEY=nvapi-AbCdEf0123456789...\n\n"
             "(Create that file if it does not exist.)\n"
         )
+
+    def secret_values(self) -> list[str]:
+        """The live credentials Nova holds, so outbound requests can be checked."""
+        return [s for s in (self.api_key, self.discord_token) if s and len(s) >= 16]
+
+    def leaks_secret(self, text: str) -> bool:
+        """True if `text` contains one of Nova's credentials, raw or URL-encoded."""
+        if not text:
+            return False
+        from urllib.parse import quote, unquote
+
+        haystack = unquote(text)
+        return any(s in text or s in haystack or quote(s) in text for s in self.secret_values())
 
     def resolve_path(self, raw: str) -> Path:
         """An absolute path for `raw`; relative paths start at the workspace.

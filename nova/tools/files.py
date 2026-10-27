@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from ..attachments import IMAGE_SUFFIXES, format_size
-from ..config import Config
+from ..config import Config, is_secret_file
 from .documents import DocumentError, extract_text, is_document
 from .registry import Registry, boolean, integer, schema, string, truncate
 
@@ -54,6 +54,11 @@ def register(registry: Registry, cfg: Config) -> None:
             return f"ERROR: {target} does not exist."
         if target.is_dir():
             return f"ERROR: {target} is a directory. Use list_dir."
+        if is_secret_file(target):
+            return (
+                f"ERROR: {target} looks like a credentials file, so Nova will not "
+                "read it. Ask the user to open it themselves if it is really needed."
+            )
         suffix = target.suffix.lower()
         if suffix in IMAGE_SUFFIXES:
             return f"{target} is an image. Use view_image to look at it."
@@ -181,6 +186,8 @@ def register(registry: Registry, cfg: Config) -> None:
                 if not fnmatch.fnmatch(name.lower(), file_pattern.lower()):
                     continue
                 file_path = current / name
+                if is_secret_file(file_path):
+                    continue
                 try:
                     if file_path.stat().st_size > 5_000_000:
                         continue
